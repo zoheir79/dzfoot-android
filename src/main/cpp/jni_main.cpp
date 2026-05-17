@@ -19,9 +19,9 @@ static AAssetManager* gAssetManager = nullptr;
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject assetManager) {
+Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager) {
     gAssetManager = AAssetManager_fromJava(env, assetManager);
-    if (!gArManager.init(env, thiz, gAssetManager)) {
+    if (!gArManager.init(env, context, gAssetManager)) {
         LOGI("ARManager init failed");
         return JNI_FALSE;
     }
@@ -31,8 +31,8 @@ Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject ass
 }
 
 JNIEXPORT void JNICALL
-Java_com_football_ar_JniBridge_nativeResume(JNIEnv* env, jobject thiz) {
-    gArManager.onResume(env, thiz, nullptr);
+Java_com_football_ar_JniBridge_nativeResume(JNIEnv* env, jobject thiz, jobject context) {
+    gArManager.onResume(env, context, nullptr);
 }
 
 JNIEXPORT void JNICALL

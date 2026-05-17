@@ -1,6 +1,10 @@
 plugins {
-    id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
+    id 'com.android.application' version '8.2.2'
+    id 'org.jetbrains.kotlin.android' version '1.9.22'
+}
+
+configurations {
+    natives
 }
 
 android {
@@ -13,10 +17,21 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DARCORE_LIBPATH=${buildDir}/arcore-native/jni",
+                          "-DARCORE_INCLUDE=${projectDir}/src/main/cpp"
+            }
+        }
     }
 
     buildTypes {
         release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -40,4 +55,32 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'io.livekit:livekit-android:2.4.0'
+    implementation 'com.google.ar:core:1.42.0'
+    natives 'com.google.ar:core:1.42.0'
+}
+
+task extractNativeLibraries() {
+    inputs.files configurations.natives
+    outputs.dir "${buildDir}/arcore-native"
+    doLast {
+        configurations.natives.each { f ->
+            if (f.name.contains("core") && f.name.endsWith(".aar")) {
+                copy {
+                    from zipTree(f)
+                    into "${buildDir}/arcore-native"
+                    include "jni/**/*"
+                    include "**/*.h"
+                }
+            }
+        }
+    }
+}
+
+// Ensure the extraction task runs before any native build task
+tasks.configureEach { task ->
+    if (task.name.contains("externalNativeBuild") || 
+        task.name.contains("generateJsonModel") ||
+        task.name.contains("CMake")) {
+        task.dependsOn(extractNativeLibraries)
+    }
 }

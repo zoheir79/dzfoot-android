@@ -1,6 +1,8 @@
 #pragma once
+#include <jni.h>
 #include "arcore_c_api.h"
 #include <GLES3/gl3.h>
+#include <GLES2/gl2ext.h>
 #include <android/asset_manager.h>
 
 struct ARPose {
@@ -32,7 +34,7 @@ public:
     int displayHeight() const { return displayHeight_; }
 
 private:
-    void setupMarkerDetection(AAssetManager* assetMgr);
+    void setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr);
     void checkForMarker();
 
     ArSession* session_       = nullptr;

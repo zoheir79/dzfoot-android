@@ -1,4 +1,4 @@
-package com.football.ar
+package com.google.ar.core
 
 import android.content.Context
 import android.content.res.AssetManager
@@ -20,7 +20,6 @@ class JniBridge {
     external fun nativeSurfaceCreated()
     external fun nativeDisplayChanged(rotation: Int, width: Int, height: Int)
 
-    // VERY explicit instance method
     fun getClassLoader(): ClassLoader {
         return JniBridge::class.java.classLoader!!
     }
@@ -28,18 +27,6 @@ class JniBridge {
     companion object {
         init {
             System.loadLibrary("football_ar")
-        }
-
-        // VERY explicit static method
-        @JvmStatic
-        fun getClassLoader(context: Context): ClassLoader {
-            return context.classLoader
-        }
-        
-        // Static variant without args if needed
-        @JvmStatic
-        fun getClassLoaderStatic(): ClassLoader {
-            return JniBridge::class.java.classLoader!!
         }
     }
 }

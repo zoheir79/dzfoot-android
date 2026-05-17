@@ -1,5 +1,6 @@
 #include "InputManager.h"
 #include <cstring>
+#include <cmath>
 
 void InputManager::onTouchDown(float x, float y) {
     touchStartX_ = x;

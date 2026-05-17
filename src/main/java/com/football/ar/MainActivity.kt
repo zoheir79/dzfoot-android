@@ -3,15 +3,13 @@ package com.football.ar
 import android.opengl.GLSurfaceView
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.launch
-import androidx.lifecycle.lifecycleScope
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private lateinit var glView: GLSurfaceView
-    private val jni = JniBridge()
+    val jni = JniBridge()
     private lateinit var lkManager: LiveKitManager
 
     private var latestGameState = ByteArray(0)
@@ -28,7 +26,11 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
         setContentView(glView)
 
-        jni.nativeInit(assets)
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 123)
+        }
+
+        jni.nativeInit(this, assets)
 
         val wsUrl = intent.getStringExtra("livekit_url") ?: ""
         val token = intent.getStringExtra("livekit_token") ?: ""
@@ -53,7 +55,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     override fun onResume() {
         super.onResume()
         glView.onResume()
-        jni.nativeResume()
+        jni.nativeResume(this)
     }
 
     override fun onPause() {

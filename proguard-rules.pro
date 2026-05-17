@@ -1,15 +1,9 @@
-# ProGuard rules for DZFoot
-# Keep native methods
--keepclasseswithmembernames class * {
-    native <methods>;
+-keep class com.football.ar.** { *; }
+-keep class com.google.ar.core.** { *; }
+-keepattributes Exceptions,InnerClasses,Signature,Deprecated,SourceFile,LineNumberTable,*Annotation*,EnclosingMethod
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
 }
-
-# Keep JNI bridge
--keep class com.football.ar.JniBridge { *; }
-
-# Keep ARCore classes
--keep class com.google.ar.** { *; }
-
-# LiveKit
--keep class io.livekit.android.** { *; }
--keep class org.webrtc.** { *; }
+-keep class com.football.ar.JniBridge {
+    public <methods>;
+}

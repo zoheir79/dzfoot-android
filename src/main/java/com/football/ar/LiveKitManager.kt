@@ -6,25 +6,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
+import io.livekit.android.events.collect
 import io.livekit.android.room.Room
-import io.livekit.android.room.participant.DataPublishOptions
+import io.livekit.android.room.track.DataPublishReliability
 
-class LiveKitManager(private val context: Context) {
+class LiveKitManager(private val activity: MainActivity) {
 
     private var room: Room? = null
-    private val jniBridge = JniBridge()
     private val scope = CoroutineScope(Dispatchers.IO)
 
     fun connect(wsUrl: String, token: String) {
-        room = LiveKit.create(context)
+        room = LiveKit.create(activity)
 
         scope.launch {
             room!!.events.collect { event ->
                 when (event) {
                     is RoomEvent.DataReceived -> {
                         when (event.topic) {
-                            "gs" -> jniBridge.nativeOnGameStateReceived(event.data)
-                            "ev" -> jniBridge.nativeOnGameEvent(event.data)
+                            "gs" -> activity.jni.nativeOnGameStateReceived(event.data)
+                            "ev" -> activity.jni.nativeOnGameEvent(event.data)
                         }
                     }
                     is RoomEvent.ParticipantDisconnected -> {
@@ -41,13 +41,13 @@ class LiveKitManager(private val context: Context) {
     }
 
     fun sendInput(inputBytes: ByteArray) {
-        room?.localParticipant?.publishData(
-            data = inputBytes,
-            options = DataPublishOptions(
-                reliable = false,
+        scope.launch {
+            room?.localParticipant?.publishData(
+                data = inputBytes,
+                reliability = DataPublishReliability.LOSSY,
                 topic = "in"
             )
-        )
+        }
     }
 
     fun disconnect() {
