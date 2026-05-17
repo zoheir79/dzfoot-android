@@ -1,0 +1,10 @@
+# Placeholder: copy real .ogg files here before building APK
+# crowd_loop.ogg
+# crowd_goal.ogg
+# crowd_boo.ogg
+# whistle_kickoff.ogg
+# whistle_halftime.ogg
+# whistle_fulltime.ogg
+# whistle_foul.ogg
+# kick.ogg
+# pass.ogg

@@ -1,0 +1,6 @@
+# Placeholder: copy real .glb files here before building APK
+# player.glb
+# goalkeeper.glb
+# ball.glb
+# pitch.glb
+# goal.glb
