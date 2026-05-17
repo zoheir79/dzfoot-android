@@ -48,3 +48,4 @@ void AudioManager::stopLoop() {
         currentLoop_.clear();
     }
 }
+ 

@@ -8,8 +8,9 @@
 bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr) {
     ArStatus status = ArSession_create(env, ctx, &session_);
     if (status != AR_SUCCESS) {
-        LOGI("ARCore session create failed: %d", status);
-        return false;
+        LOGI("ARCore session create failed: %d, running in fallback mode", status);
+        session_ = nullptr;
+        return true; // Fallback: continue without AR
     }
 
     ArConfig* config;
@@ -108,7 +109,10 @@ void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
 }
 
 bool ARManager::update() {
-    if (!session_) return false;
+    if (!session_) {
+        markerTracked_ = true; // Force render in fallback
+        return true;
+    }
     if (frame_) ArFrame_destroy(frame_);
     ArFrame_create(session_, &frame_);
 
@@ -157,11 +161,36 @@ void ARManager::checkForMarker() {
 }
 
 void ARManager::getViewMatrix(float* out) const {
-    if (camera_) ArCamera_getViewMatrix(session_, camera_, out);
+    if (camera_) {
+        ArCamera_getViewMatrix(session_, camera_, out);
+    } else {
+        // Fallback camera: at (0,0,12) looking toward origin
+        float view[16] = {
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, -12.0f,
+            0, 0, 0, 1
+        };
+        memcpy(out, view, 16*sizeof(float));
+    }
 }
 
 void ARManager::getProjectionMatrix(float* out, float near, float far) const {
-    if (camera_) ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
+    if (camera_) {
+        ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
+    } else {
+        // Simple perspective for fallback (approx 16:9 landscape)
+        float fov = 60.0f * 3.14159f / 180.0f;
+        float f = 1.0f / tanf(fov / 2.0f);
+        float aspect = 16.0f / 9.0f;
+        float persp[16] = {
+            f/aspect, 0, 0, 0,
+            0, f, 0, 0,
+            0, 0, (far+near)/(near-far), (2*far*near)/(near-far),
+            0, 0, -1, 0
+        };
+        memcpy(out, persp, 16*sizeof(float));
+    }
 }
 
 ARPose ARManager::getMarkerAnchorPose() const {
@@ -195,3 +224,4 @@ void ARManager::onDisplayGeometryChanged(int rot, int w, int h) {
     if (session_) ArSession_setDisplayGeometry(session_, rot, w, h);
 }
 void ARManager::onSurfaceCreated() {}
+ 

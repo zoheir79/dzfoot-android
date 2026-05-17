@@ -44,3 +44,4 @@ void Shader::setVec3(GLuint program, const char* name, float x, float y, float z
 }
 
 void Shader::destroy(GLuint program) { glDeleteProgram(program); }
+ 

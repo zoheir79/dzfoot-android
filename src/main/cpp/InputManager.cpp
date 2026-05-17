@@ -33,3 +33,4 @@ void InputManager::serialize(uint8_t* out, size_t maxLen) const {
     if (maxLen < sizeof(PlayerInput)) return;
     std::memcpy(out, &input_, sizeof(PlayerInput));
 }
+ 

@@ -2,6 +2,7 @@
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
+#include <GLES2/gl2.h>
 
 #include "ARManager.h"
 #include "ARRenderer.h"
@@ -15,6 +16,7 @@ static ARManager gArManager;
 static ARRenderer gRenderer;
 static GameBridge gGameBridge;
 static AAssetManager* gAssetManager = nullptr;
+static bool gRendererInited = false;
 
 extern "C" {
 
@@ -25,7 +27,7 @@ Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject con
         LOGI("ARManager init failed");
         return JNI_FALSE;
     }
-    gRenderer.init();
+    // gRenderer.init() moved to nativeSurfaceCreated where GL context is active
     LOGI("Native init OK");
     return JNI_TRUE;
 }
@@ -43,6 +45,11 @@ Java_com_football_ar_JniBridge_nativePause(JNIEnv* env, jobject thiz) {
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     gArManager.onSurfaceCreated();
+    if (!gRendererInited) {
+        gRenderer.init();
+        gRendererInited = true;
+        LOGI("Renderer init OK (GL context ready)");
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -58,6 +65,10 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     jbyteArray gameStateData) {
 
     if (!gArManager.update()) return;
+
+    // Clear screen (sky blue background for fallback mode)
+    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Get AR matrices
     jfloat* view = env->GetFloatArrayElements(viewMat, nullptr);
@@ -113,3 +124,4 @@ Java_com_football_ar_JniBridge_nativeOnGameEvent(
 }
 
 } // extern "C"
+ 

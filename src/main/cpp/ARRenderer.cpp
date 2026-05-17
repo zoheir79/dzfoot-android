@@ -80,6 +80,7 @@ void ARRenderer::destroy() {
 }
 
 void ARRenderer::drawCameraBackground(ARManager& ar) {
+    if (ar.getCameraTextureId() == 0) return; // No camera in fallback mode
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
@@ -114,7 +115,9 @@ void ARRenderer::renderGameOnMarker(ARManager& ar, const float* playerPositions,
     if (!ar.isMarkerTracked()) return;
 
     ARPose anchorPose = ar.getMarkerAnchorPose();
-    if (!anchorPose.valid) return;
+    // Fallback: use identity matrix when no real marker
+    float identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    const float* anchorMat = anchorPose.valid ? anchorPose.matrix : identity;
 
     float view[16], proj[16];
     ar.getViewMatrix(view);
@@ -129,7 +132,7 @@ void ARRenderer::renderGameOnMarker(ARManager& ar, const float* playerPositions,
     for (int j=0;j<16;++j) pitchM[j] = (j%5==0)?1.0f:0.0f;
     pitchM[12] = 0.0f; pitchM[13] = -0.01f; pitchM[14] = 0.0f;
     pitchM[0] = 1.05f; pitchM[5] = 0.02f; pitchM[10] = 0.68f;  // scale
-    mat4Mul(view, anchorPose.matrix, tmp);
+    mat4Mul(view, anchorMat, tmp);
     mat4Mul(tmp, pitchM, mvp);
     mat4Mul(proj, mvp, tmp);
     glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
@@ -144,7 +147,7 @@ void ARRenderer::renderGameOnMarker(ARManager& ar, const float* playerPositions,
         model[13] = playerPositions[i * 3 + 1] + 0.075f;  // half height offset
         model[14] = playerPositions[i * 3 + 2];
 
-        mat4Mul(view, anchorPose.matrix, tmp);
+        mat4Mul(view, anchorMat, tmp);
         mat4Mul(tmp, model, mvp);
         mat4Mul(proj, mvp, tmp);
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
@@ -159,10 +162,11 @@ void ARRenderer::renderGameOnMarker(ARManager& ar, const float* playerPositions,
     for (int j=0;j<16;++j) ballM[j]=(j%5==0)?1.0f:0.0f;
     // ball pos from last player for demo
     ballM[12] = playerPositions[0]; ballM[13] = 0.08f; ballM[14] = playerPositions[2];
-    mat4Mul(view, anchorPose.matrix, tmp);
+    mat4Mul(view, anchorMat, tmp);
     mat4Mul(tmp, ballM, mvp);
     mat4Mul(proj, mvp, tmp);
     glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
     glUniform3f(colLoc, 1.0f, 0.9f, 0.1f);
     ballMesh_.draw();
 }
+ 

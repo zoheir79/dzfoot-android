@@ -52,3 +52,4 @@ void AnimationPlayer::play(uint8_t animId) {
     blend_ = 0.0f;
     time_ = 0.0f;
 }
+ 

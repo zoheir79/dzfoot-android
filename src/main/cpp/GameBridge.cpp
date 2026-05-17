@@ -1,6 +1,37 @@
 #include "GameBridge.h"
 #include <cstring>
 
+GameBridge::GameBridge() {
+    std::memset(&state_, 0, sizeof(state_));
+    // Formation 4-4-2 Team A (left side, blue)
+    float teamA[11][3] = {
+        {-5.5f, 0, 0},       // GK
+        {-4.0f, 0, -2.0f}, {-4.0f, 0, -0.7f}, {-4.0f, 0, 0.7f}, {-4.0f, 0, 2.0f},  // DEF
+        {-2.0f, 0, -2.0f}, {-2.0f, 0, -0.7f}, {-2.0f, 0, 0.7f}, {-2.0f, 0, 2.0f},  // MID
+        {-0.5f, 0, -1.0f}, {-0.5f, 0, 1.0f}                                            // FWD
+    };
+    // Formation 4-4-2 Team B (right side, red)
+    float teamB[11][3] = {
+        {5.5f, 0, 0},       // GK
+        {4.0f, 0, -2.0f}, {4.0f, 0, -0.7f}, {4.0f, 0, 0.7f}, {4.0f, 0, 2.0f},  // DEF
+        {2.0f, 0, -2.0f}, {2.0f, 0, -0.7f}, {2.0f, 0, 0.7f}, {2.0f, 0, 2.0f},  // MID
+        {0.5f, 0, -1.0f}, {0.5f, 0, 1.0f}                                            // FWD
+    };
+    for (int i = 0; i < 11; ++i) {
+        state_.players[i].pos[0] = teamA[i][0];
+        state_.players[i].pos[1] = teamA[i][1];
+        state_.players[i].pos[2] = teamA[i][2];
+        state_.players[i].team = 0;
+    }
+    for (int i = 0; i < 11; ++i) {
+        state_.players[i+11].pos[0] = teamB[i][0];
+        state_.players[i+11].pos[1] = teamB[i][1];
+        state_.players[i+11].pos[2] = teamB[i][2];
+        state_.players[i+11].team = 1;
+    }
+    state_.ball.pos[0] = 0; state_.ball.pos[1] = 0.08f; state_.ball.pos[2] = 0;
+}
+
 void GameBridge::applyGameState(const uint8_t* data, size_t len) {
     if (len < sizeof(GameState)) return;
     std::memcpy(&state_, data, sizeof(GameState));
@@ -37,3 +68,4 @@ uint8_t deduceAnimId(const PlayerState& p, const BallState& ball) {
     if (speed < 0.64f) return 2;  // RUN
     return 3;  // SPRINT
 }
+ 

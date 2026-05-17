@@ -26,7 +26,7 @@ public:
     void getProjectionMatrix(float* out4x4, float near, float far) const;
 
     ARPose getMarkerAnchorPose() const;
-    bool   isMarkerTracked()    const { return markerTracked_; }
+    bool   isMarkerTracked()    const { if (!session_) return true; return markerTracked_; }
 
     GLuint getCameraTextureId() const { return cameraTextureId_; }
 

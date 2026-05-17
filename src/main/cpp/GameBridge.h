@@ -35,6 +35,7 @@ struct MatchEvent {
 
 class GameBridge {
 public:
+    GameBridge();
     void applyGameState(const uint8_t* data, size_t len);
     void applyMatchEvent(const uint8_t* data, size_t len);
 

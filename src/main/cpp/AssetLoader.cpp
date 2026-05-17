@@ -25,3 +25,4 @@ bool AssetLoader::exists(const char* path) {
     }
     return false;
 }
+ 
