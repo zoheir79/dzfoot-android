@@ -14,11 +14,18 @@ class JniBridge {
 
     external fun nativeOnGameStateReceived(data: ByteArray)
     external fun nativeOnGameEvent(data: ByteArray)
-    external fun nativeInit(context: Context, assetManager: AssetManager): Boolean
+    external fun nativeInit(context: Context, assetManager: AssetManager, isEmulator: Boolean): Boolean
     external fun nativeResume(context: Context)
     external fun nativePause()
     external fun nativeSurfaceCreated()
     external fun nativeDisplayChanged(rotation: Int, width: Int, height: Int)
+    external fun nativeOnTouch(x: Float, y: Float, action: Int)
+    external fun nativeGetInputBytes(): ByteArray
+    external fun nativeSetActionKick(on: Boolean)
+    external fun nativeSetActionPass(on: Boolean)
+    external fun nativeSetActionShot(on: Boolean)
+    external fun nativeSetActionDribble(on: Boolean)
+    external fun nativeSetSprint(on: Boolean)
 
     // VERY explicit instance method
     fun getClassLoader(): ClassLoader {

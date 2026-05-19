@@ -12,7 +12,7 @@ struct ARPose {
 
 class ARManager {
 public:
-    bool init(JNIEnv* env, jobject context, AAssetManager* assetMgr);
+    bool init(JNIEnv* env, jobject context, AAssetManager* assetMgr, bool skipArCore = false);
     void destroy();
 
     void onResume(JNIEnv* env, jobject context, jobject activity);

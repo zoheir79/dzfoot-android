@@ -29,7 +29,7 @@ GameBridge::GameBridge() {
         state_.players[i+11].pos[2] = teamB[i][2];
         state_.players[i+11].team = 1;
     }
-    state_.ball.pos[0] = 0; state_.ball.pos[1] = 0.08f; state_.ball.pos[2] = 0;
+    state_.ball.pos[0] = 0; state_.ball.pos[1] = 0.25f; state_.ball.pos[2] = 0;
 }
 
 void GameBridge::applyGameState(const uint8_t* data, size_t len) {

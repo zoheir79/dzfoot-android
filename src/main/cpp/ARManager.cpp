@@ -5,7 +5,13 @@
 #define LOG_TAG "ARManager"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr) {
+bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool skipArCore) {
+    if (skipArCore) {
+        LOGI("Emulator mode: skipping ARCore session creation entirely");
+        session_ = nullptr;
+        return true; // Fallback: continue without AR
+    }
+
     ArStatus status = ArSession_create(env, ctx, &session_);
     if (status != AR_SUCCESS) {
         LOGI("ARCore session create failed: %d, running in fallback mode", status);
@@ -42,9 +48,9 @@ void ARManager::destroy() {
 }
 
 void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
-    AAsset* asset = AAssetManager_open(assetMgr, "marker.jpg", AASSET_MODE_BUFFER);
+    AAsset* asset = AAssetManager_open(assetMgr, "marker_dzfoot.png", AASSET_MODE_BUFFER);
     if (!asset) {
-        LOGI("marker.jpg not found in assets!");
+        LOGI("marker_dzfoot.png not found in assets!");
         return;
     }
     const uint8_t* imgData = (const uint8_t*)AAsset_getBuffer(asset);
@@ -117,14 +123,20 @@ bool ARManager::update() {
     ArFrame_create(session_, &frame_);
 
     ArStatus status = ArSession_update(session_, frame_);
-    if (status != AR_SUCCESS) return false;
+    if (status != AR_SUCCESS) {
+        // Don't bail entirely; allow render of game with fallback view (useful on emulator)
+        return true;
+    }
 
     if (camera_) ArCamera_release(camera_);
     ArFrame_acquireCamera(session_, frame_, &camera_);
 
     ArTrackingState trackingState;
     ArCamera_getTrackingState(session_, camera_, &trackingState);
-    if (trackingState != AR_TRACKING_STATE_TRACKING) return false;
+    if (trackingState != AR_TRACKING_STATE_TRACKING) {
+        // AR tracking lost (common on emulator) - keep rendering anyway
+        return true;
+    }
 
     checkForMarker();
     return true;
@@ -160,18 +172,39 @@ void ARManager::checkForMarker() {
     ArTrackableList_destroy(list);
 }
 
+// Helper: normalize vector
+static void normalize(float* v) {
+    float len = sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+    if (len > 0.0001f) { v[0]/=len; v[1]/=len; v[2]/=len; }
+}
+// Helper: build LookAt matrix (right-handed, column-major for OpenGL)
+static void lookAt(float* m, float eyeX, float eyeY, float eyeZ,
+                   float centerX, float centerY, float centerZ,
+                   float upX, float upY, float upZ) {
+    float f[3] = {centerX-eyeX, centerY-eyeY, centerZ-eyeZ};
+    normalize(f);
+    float up[3] = {upX, upY, upZ};
+    normalize(up);
+    float s[3] = {f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]};
+    normalize(s);
+    float u[3] = {s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]};
+
+    // Column-major order for OpenGL
+    m[0]=s[0];  m[4]=s[1];  m[8]=s[2];  m[12]=-(s[0]*eyeX+s[1]*eyeY+s[2]*eyeZ);
+    m[1]=u[0];  m[5]=u[1];  m[9]=u[2];  m[13]=-(u[0]*eyeX+u[1]*eyeY+u[2]*eyeZ);
+    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2];m[14]=(f[0]*eyeX+f[1]*eyeY+f[2]*eyeZ);
+    m[3]=0;     m[7]=0;     m[11]=0;     m[15]=1;
+}
+
 void ARManager::getViewMatrix(float* out) const {
     if (camera_) {
         ArCamera_getViewMatrix(session_, camera_, out);
     } else {
-        // Fallback camera: at (0,0,12) looking toward origin
-        float view[16] = {
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, -12.0f,
-            0, 0, 0, 1
-        };
-        memcpy(out, view, 16*sizeof(float));
+        // Fallback camera: TV broadcast view of football pitch
+        // Camera positioned high and back to see entire pitch in perspective
+        lookAt(out, 0.0f, 8.0f, 14.0f,   // eye: behind and above
+                     0.0f, 0.0f, 0.0f,    // center: middle of pitch
+                     0.0f, 1.0f, 0.0f);   // up: Y is up
     }
 }
 
@@ -179,15 +212,17 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
     if (camera_) {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
     } else {
-        // Simple perspective for fallback (approx 16:9 landscape)
+        // Simple perspective for fallback (use actual display aspect)
+        // Column-major OpenGL projection matrix
         float fov = 60.0f * 3.14159f / 180.0f;
         float f = 1.0f / tanf(fov / 2.0f);
-        float aspect = 16.0f / 9.0f;
+        float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
+        // Column-major layout: each group of 4 floats is one COLUMN
         float persp[16] = {
-            f/aspect, 0, 0, 0,
-            0, f, 0, 0,
-            0, 0, (far+near)/(near-far), (2*far*near)/(near-far),
-            0, 0, -1, 0
+            f/aspect, 0,    0,                          0,    // col 0
+            0,        f,    0,                          0,    // col 1
+            0,        0,    (far+near)/(near-far),      -1,   // col 2
+            0,        0,    (2*far*near)/(near-far),    0     // col 3
         };
         memcpy(out, persp, 16*sizeof(float));
     }

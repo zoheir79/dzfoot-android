@@ -3,8 +3,12 @@ project(football_ar)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Headers are now in src/main/cpp directly
+# Enable 16 KB page size alignment for Android 15+ compatibility
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
+
+# Headers
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${ARCORE_INCLUDE})
 
 add_library(football_ar SHARED
     jni_main.cpp

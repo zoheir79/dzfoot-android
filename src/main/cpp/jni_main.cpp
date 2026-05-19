@@ -7,6 +7,7 @@
 #include "ARManager.h"
 #include "ARRenderer.h"
 #include "GameBridge.h"
+#include "InputManager.h"
 #include <cstring>
 
 #define LOG_TAG "DZFootJNI"
@@ -15,20 +16,21 @@
 static ARManager gArManager;
 static ARRenderer gRenderer;
 static GameBridge gGameBridge;
+static InputManager gInputManager;
 static AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
 
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager) {
+Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager, jboolean isEmulator) {
     gAssetManager = AAssetManager_fromJava(env, assetManager);
-    if (!gArManager.init(env, context, gAssetManager)) {
+    if (!gArManager.init(env, context, gAssetManager, isEmulator == JNI_TRUE)) {
         LOGI("ARManager init failed");
         return JNI_FALSE;
     }
     // gRenderer.init() moved to nativeSurfaceCreated where GL context is active
-    LOGI("Native init OK");
+    LOGI("Native init OK (emulator=%d)", isEmulator);
     return JNI_TRUE;
 }
 
@@ -45,17 +47,22 @@ Java_com_football_ar_JniBridge_nativePause(JNIEnv* env, jobject thiz) {
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     gArManager.onSurfaceCreated();
-    if (!gRendererInited) {
-        gRenderer.init();
-        gRendererInited = true;
-        LOGI("Renderer init OK (GL context ready)");
-    }
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_CULL_FACE);  // Disabled: simpler debug, can enable once winding verified
+    // GL context is fresh on every surface creation (orientation, pause/resume).
+    // Old programs/VAOs from prior context are invalid; recreate everything.
+    gRenderer.init();
+    gRendererInited = true;
+    LOGI("Renderer init OK (GL context ready)");
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeDisplayChanged(
     JNIEnv* env, jobject thiz, jint rotation, jint width, jint height) {
     gArManager.onDisplayGeometryChanged(rotation, width, height);
+    glViewport(0, 0, width, height);
+    LOGI("Viewport set: %dx%d rotation=%d", width, height, rotation);
 }
 
 JNIEXPORT void JNICALL
@@ -94,17 +101,77 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     // Render camera background
     gRenderer.drawCameraBackground(gArManager);
 
-    // Render game on marker if tracked
-    if (gArManager.isMarkerTracked()) {
-        const GameState& gs = gGameBridge.currentState();
-        float positions[66]; // 22 players * 3
-        for (int i = 0; i < 22; ++i) {
-            positions[i * 3 + 0] = gs.players[i].pos[0];
-            positions[i * 3 + 1] = gs.players[i].pos[1];
-            positions[i * 3 + 2] = gs.players[i].pos[2];
-        }
-        gRenderer.renderGameOnMarker(gArManager, positions, 22);
+    // Always render game (use fallback view if marker not tracked)
+    GameState& gs = const_cast<GameState&>(gGameBridge.currentState());
+
+    // If no remote game state, apply local input (offline mode)
+    if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
+        const PlayerInput& input = gInputManager.getInput();
+        float speed = 0.05f;
+        gs.players[0].pos[0] += input.dir_x * speed;
+        gs.players[0].pos[2] += input.dir_z * speed;
+        if (gs.players[0].pos[0] < -5.0f) gs.players[0].pos[0] = -5.0f;
+        if (gs.players[0].pos[0] > 5.0f) gs.players[0].pos[0] = 5.0f;
+        if (gs.players[0].pos[2] < -2.0f) gs.players[0].pos[2] = -2.0f;
+        if (gs.players[0].pos[2] > 2.0f) gs.players[0].pos[2] = 2.0f;
+        gs.ball.pos[0] = gs.players[0].pos[0] + 0.15f;
+        gs.ball.pos[1] = 0.25f;
+        gs.ball.pos[2] = gs.players[0].pos[2];
     }
+
+    float positions[66]; // 22 players * 3
+    for (int i = 0; i < 22; ++i) {
+        positions[i * 3 + 0] = gs.players[i].pos[0];
+        positions[i * 3 + 1] = gs.players[i].pos[1];
+        positions[i * 3 + 2] = gs.players[i].pos[2];
+    }
+    gRenderer.renderGameOnMarker(gArManager, positions, 22);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeOnTouch(
+    JNIEnv* env, jobject thiz, jfloat x, jfloat y, jint action) {
+    if (action == 0) { // ACTION_DOWN
+        gInputManager.onTouchDown(x, y);
+    } else if (action == 2) { // ACTION_MOVE
+        gInputManager.onTouchMove(x, y);
+    } else if (action == 1 || action == 3) { // ACTION_UP or ACTION_CANCEL
+        gInputManager.onTouchUp();
+    }
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
+    uint8_t buf[32];
+    gInputManager.serialize(buf, 32);
+    jbyteArray result = env->NewByteArray(32);
+    env->SetByteArrayRegion(result, 0, 32, (jbyte*)buf);
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeSetActionKick(JNIEnv* env, jobject thiz, jboolean on) {
+    gInputManager.setActionKick(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeSetActionPass(JNIEnv* env, jobject thiz, jboolean on) {
+    gInputManager.setActionPass(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeSetActionShot(JNIEnv* env, jobject thiz, jboolean on) {
+    gInputManager.setActionShot(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeSetActionDribble(JNIEnv* env, jobject thiz, jboolean on) {
+    gInputManager.setActionDribble(on == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeSetSprint(JNIEnv* env, jobject thiz, jboolean on) {
+    gInputManager.setSprint(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

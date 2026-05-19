@@ -96,7 +96,43 @@ Format GameState (JSON) :
 
 ---
 
-## 🎨 Assets requis
+## � Anti-Lag Réseau (Spec V2)
+
+Pour garantir la fluidité jusqu'à **150 ms de ping** (couvre WiFi et 4G), le client implémente les 4 techniques suivantes.
+
+### 1. Client-Side Prediction (ton joueur)
+- Ton input est appliqué **immédiatement** à l'écran sans attendre le serveur.
+- Le client simule en local le résultat de l'input.
+- Quand l'état serveur arrive, le client recalcule son état depuis cet état serveur + les inputs non encore confirmés (**server reconciliation**).
+
+### 2. Interpolation des entités (adversaire & IA)
+- L'adversaire est affiché avec **~100 ms de retard** mais de façon parfaitement fluide.
+- Le client interpole les positions entre les 2 derniers états reçus (`GameState`).
+- Résultat : mouvement fluide même avec des updates à 20 Hz.
+
+### 3. Server Reconciliation
+- Le serveur est autoritaire.
+- Si la prédiction locale diverge de la réalité serveur, le client recalcule son état depuis le dernier `GameState` confirmé + les inputs non encore confirmés.
+- Correction appliquée en douceur (pas de téléportation, pas de "rubber-banding").
+
+### 4. Dead Reckoning (balle)
+- Entre deux `GameState`, le client extrapole la position de la balle selon sa dernière vélocité connue : `pos + vel × deltaT`.
+- Si le serveur envoie une correction, interpolation douce vers la vraie position.
+- La balle ne s'arrête jamais brutalement entre deux paquets.
+
+### Fréquences optimales
+- **Inputs joueur** : envoyés à **60 Hz** (chaque frame) pour fraîcheur maximale.
+- **GameState serveur** : broadcast à **20 Hz** (~50 ms). Suffisant avec interpolation. Un paquet compressé ~300 octets → ~6 KB/s par match.
+- **Topic LiveKit** : `"in"` (inputs), `"gs"` (GameState), `"ev"` (events). Mode **unreliable** (pas de retransmission, fraîcheur prioritaire).
+
+### Indicateur qualité réseau
+- Ping mesuré via round-trip `GameState` ou heartbeat dédié.
+- **Warning** affiché si ping > 300 ms.
+- **Déconnexion automatique** si ping > 500 ms.
+
+---
+
+## �🎨 Assets requis
 
 | Fichier | Chemin | Description |
 |---------|--------|-------------|
