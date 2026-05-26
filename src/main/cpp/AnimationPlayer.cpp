@@ -9,14 +9,15 @@ static struct { const char* name; float duration; bool loop; } sAnimTable[] = {
     {"shoot_l",    0.9f, false},
     {"pass_short", 0.7f, false},
     {"pass_long",  1.0f, false},
+    {"header",     0.8f, false},
     {"tackle",     1.1f, false},
     {"dribble",    0.5f, true},
+    {"fall",       1.0f, false},
     {"celebrate",  2.5f, false},
+    {"gk_idle",    2.0f, true},
     {"gk_dive_l",  1.2f, false},
     {"gk_dive_r",  1.2f, false},
     {"gk_catch",   0.8f, false},
-    {"fall",       1.0f, false},
-    {"header",     0.8f, false},
 };
 
 const char* AnimationPlayer::getClipName(uint8_t animId) {

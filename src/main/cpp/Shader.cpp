@@ -9,20 +9,41 @@ GLuint Shader::compile(const char* vertSrc, const char* fragSrc) {
     glCompileShader(vs);
     GLint ok;
     glGetShaderiv(vs, GL_COMPILE_STATUS, &ok);
-    if (!ok) { char log[512]; glGetShaderInfoLog(vs, 512, nullptr, log); LOGE("VS: %s", log); }
+    if (!ok) {
+        char log[512];
+        glGetShaderInfoLog(vs, 512, nullptr, log);
+        LOGE("VS: %s", log);
+        glDeleteShader(vs);
+        return 0;
+    }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &fragSrc, nullptr);
     glCompileShader(fs);
     glGetShaderiv(fs, GL_COMPILE_STATUS, &ok);
-    if (!ok) { char log[512]; glGetShaderInfoLog(fs, 512, nullptr, log); LOGE("FS: %s", log); }
+    if (!ok) {
+        char log[512];
+        glGetShaderInfoLog(fs, 512, nullptr, log);
+        LOGE("FS: %s", log);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        return 0;
+    }
 
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vs);
     glAttachShader(prog, fs);
     glLinkProgram(prog);
     glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) { char log[512]; glGetProgramInfoLog(prog, 512, nullptr, log); LOGE("Link: %s", log); }
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(prog, 512, nullptr, log);
+        LOGE("Link: %s", log);
+        glDeleteProgram(prog);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        return 0;
+    }
 
     glDeleteShader(vs);
     glDeleteShader(fs);

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "protocol/DZFootProtocol.h"
 
 // Maps anim_id to glTF animation clip names
 class AnimationPlayer {
@@ -20,20 +21,4 @@ private:
     float time_ = 0.0f;
 };
 
-// Animation IDs (sync with GameBridge.h)
-#define ANIM_IDLE       0
-#define ANIM_WALK       1
-#define ANIM_RUN        2
-#define ANIM_SPRINT     3
-#define ANIM_SHOOT_R    4
-#define ANIM_SHOOT_L    5
-#define ANIM_PASS_SHORT 6
-#define ANIM_PASS_LONG  7
-#define ANIM_TACKLE     8
-#define ANIM_DRIBBLE    9
-#define ANIM_CELEBRATE  10
-#define ANIM_GK_DIVE_L  11
-#define ANIM_GK_DIVE_R  12
-#define ANIM_GK_CATCH   13
-#define ANIM_FALL       14
-#define ANIM_HEADER     15
+// Animation IDs now come from dzfoot::AnimId in DZFootProtocol.h

@@ -2,6 +2,7 @@
 #include <cmath>
 
 void Mesh::loadCube(float size) {
+    destroy(); // Release any previously created buffers/arrays
     float h = size * 0.5f;
     Vertex verts[36];
     int i = 0;
@@ -38,6 +39,7 @@ void Mesh::loadCube(float size) {
 }
 
 void Mesh::loadSphere(float radius, int stacks, int slices) {
+    destroy(); // Release any previously created buffers/arrays
     std::vector<Vertex> verts;
     for (int i = 0; i <= stacks; ++i) {
         float phi = M_PI * float(i) / float(stacks);
@@ -87,4 +89,53 @@ void Mesh::destroy() {
     vbo_ = vao_ = 0;
     count_ = 0;
 }
- 
+
+// ─── SkinnedMesh ───────────────────────────────────────────────────
+
+void SkinnedMesh::upload(const std::vector<SkinnedVertex>& verts, const std::vector<uint16_t>& indices) {
+    destroy();
+    glGenVertexArrays(1, &vao_);
+    glGenBuffers(1, &vbo_);
+    glGenBuffers(1, &ibo_);
+
+    glBindVertexArray(vao_);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(SkinnedVertex), verts.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint16_t), indices.data(), GL_STATIC_DRAW);
+
+    // pos
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, pos));
+    glEnableVertexAttribArray(0);
+    // normal
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, normal));
+    glEnableVertexAttribArray(1);
+    // uv
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, uv));
+    glEnableVertexAttribArray(2);
+    // bone indices
+    glVertexAttribIPointer(3, 4, GL_UNSIGNED_BYTE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, boneIndices));
+    glEnableVertexAttribArray(3);
+    // bone weights
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, boneWeights));
+    glEnableVertexAttribArray(4);
+
+    count_ = static_cast<GLsizei>(indices.size());
+}
+
+void SkinnedMesh::draw() const {
+    if (vao_ && count_ > 0) {
+        glBindVertexArray(vao_);
+        glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_SHORT, nullptr);
+    }
+}
+
+void SkinnedMesh::destroy() {
+    if (ibo_) glDeleteBuffers(1, &ibo_);
+    if (vbo_) glDeleteBuffers(1, &vbo_);
+    if (vao_) glDeleteVertexArrays(1, &vao_);
+    ibo_ = vbo_ = vao_ = 0;
+    count_ = 0;
+}

@@ -22,9 +22,9 @@ bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool ski
     ArConfig* config;
     ArConfig_create(session_, &config);
     ArConfig_setFocusMode(session_, config, AR_FOCUS_MODE_AUTO);
-    setupMarkerDetection(env, assetMgr);
     ArSession_configure(session_, config);
     ArConfig_destroy(config);
+    setupMarkerDetection(env, assetMgr);
 
     glGenTextures(1, &cameraTextureId_);
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, cameraTextureId_);
@@ -37,14 +37,15 @@ bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool ski
 }
 
 void ARManager::destroy() {
-    if (markerAnchor_) ArAnchor_release(markerAnchor_);
-    if (camera_) ArCamera_release(camera_);
-    if (frame_) ArFrame_destroy(frame_);
+    if (markerAnchor_) { ArAnchor_release(markerAnchor_); markerAnchor_ = nullptr; }
+    if (camera_) { ArCamera_release(camera_); camera_ = nullptr; }
+    if (frame_) { ArFrame_destroy(frame_); frame_ = nullptr; }
     if (session_) {
         ArSession_pause(session_);
         ArSession_destroy(session_);
+        session_ = nullptr;
     }
-    if (cameraTextureId_) glDeleteTextures(1, &cameraTextureId_);
+    if (cameraTextureId_) { glDeleteTextures(1, &cameraTextureId_); cameraTextureId_ = 0; }
 }
 
 void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
@@ -103,6 +104,8 @@ void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
 
     if (status != AR_SUCCESS) {
         LOGI("Failed to add image to DB: %d", status);
+        ArAugmentedImageDatabase_destroy(db);
+        return;
     }
 
     ArConfig* cfg;
@@ -166,6 +169,8 @@ void ARManager::checkForMarker() {
                 LOGI("Marker anchor created!");
             }
             markerTracked_ = true;
+        } else {
+            markerTracked_ = false;
         }
         ArTrackable_release(trackable);
     }
@@ -231,7 +236,7 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
 ARPose ARManager::getMarkerAnchorPose() const {
     ARPose pose;
     pose.valid = false;
-    if (!markerAnchor_) return pose;
+    if (!session_ || !markerAnchor_) return pose;
 
     ArTrackingState state;
     ArAnchor_getTrackingState(session_, markerAnchor_, &state);

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "models": {
+    "player_base": "player_base.glb",
+    "ball": "ball.glb",
+    "goals": "goals.glb",
+    "pitch": "pitch.glb",
+    "stadium": "stadium_test.glb"
+  },
+  "animations": {
+    "templates": "anim_templates.bin"
+  },
+  "sounds": {
+    "kick": "sounds/ballsound.ogg",
+    "goalpost": "sounds/goalpost.ogg",
+    "whistle_start": "sounds/whistle2.ogg",
+    "whistle_end": "sounds/whistle3.ogg",
+    "crowd_home": "sounds/crowd01.ogg",
+    "crowd_away": "sounds/crowd02.ogg"
+  },
+  "tests": {
+    "golden_gamestate": "golden_gamestate_v1.bin",
+    "golden_matchsetup": "golden_matchsetup_v1.bin"
+  }
+}

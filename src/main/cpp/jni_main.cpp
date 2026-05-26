@@ -2,16 +2,20 @@
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
 #include "ARManager.h"
 #include "ARRenderer.h"
 #include "GameBridge.h"
 #include "InputManager.h"
+#include "protocol/DZFootProtocol.h"
 #include <cstring>
 
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+// Forward declaration of protocol test (tests/test_protocol_layout.cpp)
+extern bool runProtocolTests();
 
 static ARManager gArManager;
 static ARRenderer gRenderer;
@@ -25,6 +29,10 @@ extern "C" {
 JNIEXPORT jboolean JNICALL
 Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager, jboolean isEmulator) {
     gAssetManager = AAssetManager_fromJava(env, assetManager);
+    if (!runProtocolTests()) {
+        LOGI("Protocol test FAILED — binary layout mismatch detected");
+        // Do not abort init; log and continue so dev can inspect
+    }
     if (!gArManager.init(env, context, gAssetManager, isEmulator == JNI_TRUE)) {
         LOGI("ARManager init failed");
         return JNI_FALSE;
@@ -102,14 +110,14 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     gRenderer.drawCameraBackground(gArManager);
 
     // Always render game (use fallback view if marker not tracked)
-    GameState& gs = const_cast<GameState&>(gGameBridge.currentState());
+    dzfoot::GameStatePacket& gs = const_cast<dzfoot::GameStatePacket&>(gGameBridge.currentState());
 
     // If no remote game state, apply local input (offline mode)
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
-        const PlayerInput& input = gInputManager.getInput();
+        const dzfoot::PlayerInputPacket& input = gInputManager.getInput();
         float speed = 0.05f;
-        gs.players[0].pos[0] += input.dir_x * speed;
-        gs.players[0].pos[2] += input.dir_z * speed;
+        gs.players[0].pos[0] += input.dirX * speed;
+        gs.players[0].pos[2] += input.dirZ * speed;
         if (gs.players[0].pos[0] < -5.0f) gs.players[0].pos[0] = -5.0f;
         if (gs.players[0].pos[0] > 5.0f) gs.players[0].pos[0] = 5.0f;
         if (gs.players[0].pos[2] < -2.0f) gs.players[0].pos[2] = -2.0f;
@@ -142,10 +150,11 @@ Java_com_football_ar_JniBridge_nativeOnTouch(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
-    uint8_t buf[32];
-    gInputManager.serialize(buf, 32);
-    jbyteArray result = env->NewByteArray(32);
-    env->SetByteArrayRegion(result, 0, 32, (jbyte*)buf);
+    constexpr size_t pktSize = sizeof(dzfoot::PlayerInputPacket);
+    uint8_t buf[pktSize];
+    gInputManager.serialize(buf, pktSize);
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);
     return result;
 }
 

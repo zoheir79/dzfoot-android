@@ -15,6 +15,7 @@ private:
     GLuint cameraShader_ = 0;
     GLuint gameShader_   = 0;
     GLuint quadVbo_      = 0;
+    GLuint uvVbo_        = 0;
 
     Mesh playerMesh_;
     Mesh ballMesh_;

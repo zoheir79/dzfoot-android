@@ -8,6 +8,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size
 
 # Headers
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 include_directories(${ARCORE_INCLUDE})
 
 add_library(football_ar SHARED
@@ -22,6 +23,8 @@ add_library(football_ar SHARED
     AssetLoader.cpp
     AnimationPlayer.cpp
     InputManager.cpp
+    GLBLoader.cpp
+    tests/test_protocol_layout.cpp
 )
 
 # Link ARCore library

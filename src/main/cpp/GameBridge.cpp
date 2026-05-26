@@ -1,5 +1,9 @@
 #include "GameBridge.h"
 #include <cstring>
+#include <android/log.h>
+
+#define LOG_TAG "GameBridge"
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 GameBridge::GameBridge() {
     std::memset(&state_, 0, sizeof(state_));
@@ -33,19 +37,30 @@ GameBridge::GameBridge() {
 }
 
 void GameBridge::applyGameState(const uint8_t* data, size_t len) {
-    if (len < sizeof(GameState)) return;
-    std::memcpy(&state_, data, sizeof(GameState));
+    if (!dzfoot::validateGameStatePacket(data, len)) {
+        LOGE("Rejected invalid GameState packet (len=%zu)", len);
+        return;
+    }
+    std::memcpy(&state_, data, sizeof(dzfoot::GameStatePacket));
+    // Sanity-check first player position to catch NaN
+    if (!dzfoot::isFiniteVec3(state_.players[0].pos)) {
+        LOGE("Rejected GameState with NaN in player position");
+        return;
+    }
 }
 
 void GameBridge::applyMatchEvent(const uint8_t* data, size_t len) {
-    if (len < sizeof(MatchEvent)) return;
-    MatchEvent ev;
-    std::memcpy(&ev, data, sizeof(MatchEvent));
+    if (!dzfoot::validateMatchEventPacket(data, len)) {
+        LOGE("Rejected invalid MatchEvent packet (len=%zu)", len);
+        return;
+    }
+    dzfoot::MatchEventPacket ev;
+    std::memcpy(&ev, data, sizeof(dzfoot::MatchEventPacket));
     pendingEvents_.push_back(ev);
 }
 
-std::vector<MatchEvent> GameBridge::flushEvents() {
-    std::vector<MatchEvent> result = std::move(pendingEvents_);
+std::vector<dzfoot::MatchEventPacket> GameBridge::flushEvents() {
+    std::vector<dzfoot::MatchEventPacket> result = std::move(pendingEvents_);
     pendingEvents_.clear();
     return result;
 }
@@ -59,13 +74,13 @@ void GameBridge::setARCamera(const float* viewMatrix,
     useARCamera_ = true;
 }
 
-// AnimationStateDetector — deduce anim_id from GF state
+// AnimationStateDetector -- deduce anim_id from GF state
 // In real integration this runs inside GameplayFootball server tick
-uint8_t deduceAnimId(const PlayerState& p, const BallState& ball) {
+uint8_t deduceAnimId(const dzfoot::NetworkPlayerState& p, const dzfoot::NetworkBallState& ball) {
     float speed = p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2];
-    if (speed < 0.01f) return 0;  // IDLE
-    if (speed < 0.16f) return 1;  // WALK
-    if (speed < 0.64f) return 2;  // RUN
-    return 3;  // SPRINT
+    if (speed < 0.01f) return dzfoot::ANIM_IDLE;
+    if (speed < 0.16f) return dzfoot::ANIM_WALK;
+    if (speed < 0.64f) return dzfoot::ANIM_RUN;
+    return dzfoot::ANIM_SPRINT;
 }
  

@@ -70,6 +70,11 @@ void ARRenderer::init() {
     glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(quadPositions_), quadPositions_, GL_STATIC_DRAW);
 
+    static const float uvs[8] = {0, 1, 1, 1, 0, 0, 1, 0};
+    glGenBuffers(1, &uvVbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
+
     // Init placeholder meshes - larger for TV broadcast view
     playerMesh_.loadCube(0.6f);
     ballMesh_.loadSphere(0.25f, 12, 12);
@@ -80,6 +85,7 @@ void ARRenderer::destroy() {
     Shader::destroy(cameraShader_);
     Shader::destroy(gameShader_);
     if (quadVbo_) glDeleteBuffers(1, &quadVbo_);
+    if (uvVbo_) glDeleteBuffers(1, &uvVbo_);
     playerMesh_.destroy();
     ballMesh_.destroy();
     pitchMesh_.destroy();
@@ -99,11 +105,7 @@ void ARRenderer::drawCameraBackground(ARManager& ar) {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(0);
 
-    static const float uvs[8] = {0, 1, 1, 1, 0, 0, 1, 0};
-    GLuint uvVbo;
-    glGenBuffers(1, &uvVbo);
-    glBindBuffer(GL_ARRAY_BUFFER, uvVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(1);
 
@@ -111,7 +113,6 @@ void ARRenderer::drawCameraBackground(ARManager& ar) {
 
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
-    glDeleteBuffers(1, &uvVbo);
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
@@ -220,7 +221,7 @@ static void buildFallbackView(float* m) {
     m[8]=sz;   m[9]=uz;   m[10]=-fz; m[11]=0;
     m[12]=-(sx*ex + sy*ey + sz*ez);
     m[13]=-(ux*ex + uy*ey + uz*ez);
-    m[14]= (fx*ex + fy*ey + fz*ez);
+    m[14]=-(fx*ex + fy*ey + fz*ez);
     m[15]=1;
 }
  
