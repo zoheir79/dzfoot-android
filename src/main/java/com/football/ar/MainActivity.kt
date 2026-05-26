@@ -285,6 +285,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onResume()
         glView.onResume()
         jni.nativeResume(this)
+        audioSystem.init()
     }
 
     override fun onPause() {
