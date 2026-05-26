@@ -127,8 +127,23 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 123)
         }
 
-        checkArCoreAndInit()
-        createMatchAndConnect()
+        showModeSelectionDialog()
+    }
+
+    private fun showModeSelectionDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sélection du Mode de Jeu")
+            .setMessage("Choisissez votre expérience visuelle de GameplayFootball :")
+            .setCancelable(false)
+            .setPositiveButton("Réalité Augmentée (AR)") { _, _ ->
+                checkArCoreAndInit(forceClassic = false)
+                createMatchAndConnect()
+            }
+            .setNegativeButton("Rendu 3D Classique") { _, _ ->
+                checkArCoreAndInit(forceClassic = true)
+                createMatchAndConnect()
+            }
+            .show()
     }
 
     private fun createMatchAndConnect() {
@@ -180,24 +195,16 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 Build.MANUFACTURER.contains("Google") && Build.BRAND.contains("generic"))
     }
 
-    private fun checkArCoreAndInit() {
-        // Set to true to skip ARCore on emulator (use fallback rendering).
-        // Set to false to FORCE ARCore attempt — useful to test AR code path on emulator.
-        val skipArCore = false
-
-        if (isEmulator() && skipArCore) {
-            Log.i("MainActivity", "Emulator: fallback mode (ARCore skipped)")
+    private fun checkArCoreAndInit(forceClassic: Boolean) {
+        if (forceClassic) {
+            Log.i("MainActivity", "Classic mode requested: skipping ARCore session creation")
             jni.nativeInit(this, assets, true)
             return
         }
 
-        if (isEmulator()) {
-            Log.i("MainActivity", "Emulator detected - forcing ARCore attempt (will fall back if it fails)")
-        }
-
         val availability = ArCoreApk.getInstance().checkAvailability(this)
         if (availability.isTransient) {
-            Handler(Looper.getMainLooper()).postDelayed({ checkArCoreAndInit() }, 200)
+            Handler(Looper.getMainLooper()).postDelayed({ checkArCoreAndInit(forceClassic) }, 200)
             return
         }
 
