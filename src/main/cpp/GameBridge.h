@@ -16,7 +16,7 @@ public:
     const dzfoot::GameStatePacket& currentState() const { return state_; }
 
     // Interpolated state for rendering (smooth 20 Hz)
-    dzfoot::GameStatePacket getInterpolatedState() const;
+    dzfoot::GameStatePacket getInterpolatedState();
 
     std::vector<dzfoot::MatchEventPacket> flushEvents();
 

@@ -58,7 +58,7 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
     predictor_.acknowledge(state_.tick, state_.players[0], delta);
 }
 
-dzfoot::GameStatePacket GameBridge::getInterpolatedState() const {
+dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
     dzfoot::GameStatePacket out = state_;
     float latest = interpolator_.latestReceivedTimeMs();
     float renderTime = latest - EntityInterpolator::INTERP_DELAY_MS;

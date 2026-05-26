@@ -3,48 +3,50 @@
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AudioManager", __VA_ARGS__)
 
+// Forward declarations for JNI audio bridge (defined in jni_main.cpp)
+extern void androidPlaySound(const char* name);
+extern void androidStopAllSounds();
+extern void androidSetVolume(float vol);
+extern void androidPlayLoop(const char* name);
+extern void androidStopLoop();
+
 bool AudioManager::init() {
-    // TODO: alcOpenDevice, alcCreateContext, alcMakeContextCurrent
-    LOGI("Audio init (stub)");
+    LOGI("Audio init via JNI bridge");
     inited_ = true;
     return true;
 }
 
 void AudioManager::destroy() {
-    // TODO: alcDestroyContext, alcCloseDevice
     inited_ = false;
 }
 
 bool AudioManager::loadSound(const char* name, const uint8_t* data, size_t len) {
-    // TODO: alGenBuffers, alBufferData with OGG decoder
     LOGI("Load sound %s (%zu bytes)", name, len);
     return true;
 }
 
 void AudioManager::playSound(const char* name) {
     if (!inited_) return;
-    LOGI("Play %s", name);
-    // TODO: alSourcePlay
+    androidPlaySound(name);
 }
 
 void AudioManager::stopAll() {
-    // TODO: alSourceStop for all sources
+    androidStopAllSounds();
 }
 
 void AudioManager::setVolume(float vol) {
     volume_ = vol;
-    // TODO: alListenerf(AL_GAIN, vol)
+    androidSetVolume(vol);
 }
 
 void AudioManager::playLoop(const char* name) {
     currentLoop_ = name;
-    playSound(name);
-    // TODO: alSourcei(AL_LOOPING, AL_TRUE)
+    androidPlayLoop(name);
 }
 
 void AudioManager::stopLoop() {
     if (!currentLoop_.empty()) {
-        // TODO: alSourceStop(loopSource)
+        androidStopLoop();
         currentLoop_.clear();
     }
 }

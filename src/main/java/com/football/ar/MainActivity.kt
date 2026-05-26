@@ -11,6 +11,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.ar.core.ArCoreApk
 import javax.microedition.khronos.egl.EGLConfig
@@ -21,22 +22,72 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private lateinit var glView: GLSurfaceView
     val jni = JniBridge()
     private lateinit var lkManager: LiveKitManager
+    val audioSystem = AudioSystem()
 
     private var latestGameState = ByteArray(0)
     private val viewMatrix   = FloatArray(16)
     private val projMatrix   = FloatArray(16)
     private val anchorMatrix = FloatArray(16)
 
+    private lateinit var scoreText: TextView
+    private lateinit var timerText: TextView
+    private lateinit var eventText: TextView
+
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
 
         glView = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(2)
+            setEGLContextClientVersion(3)
             setRenderer(this@MainActivity)
+        }
+
+        audioSystem.init()
+
+        scoreText = TextView(this).apply {
+            textSize = 24f
+            setTextColor(0xFFFFFFFF.toInt())
+            text = "0 - 0"
+        }
+        timerText = TextView(this).apply {
+            textSize = 20f
+            setTextColor(0xFFFFFFFF.toInt())
+            text = "00:00"
+        }
+        eventText = TextView(this).apply {
+            textSize = 18f
+            setTextColor(0xFFFFFF00.toInt())
+            text = ""
         }
 
         val root = FrameLayout(this).apply {
             addView(glView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+
+            // Score overlay (top center)
+            addView(scoreText, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+                topMargin = 40
+            })
+
+            // Timer overlay (top right)
+            addView(timerText, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.END
+                topMargin = 40
+                marginEnd = 40
+            })
+
+            // Event overlay (center)
+            addView(eventText, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.CENTER
+            })
 
             val btnLayout = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -204,6 +255,18 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     fun onGameStateReceived(data: ByteArray) {
         latestGameState = data.copyOf()
+        if (data.size < 72) return
+        // Parse binary GameStatePacket (offset 26 = score[2], offset 28 = timer float)
+        val scoreA = data[26].toInt()
+        val scoreB = data[27].toInt()
+        val timerBytes = data.sliceArray(28 until 32)
+        val timer = java.nio.ByteBuffer.wrap(timerBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).float
+        val minutes = (timer / 60).toInt()
+        val seconds = (timer % 60).toInt()
+        runOnUiThread {
+            scoreText.text = "$scoreA - $scoreB"
+            timerText.text = String.format("%02d:%02d", minutes, seconds)
+        }
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -228,5 +291,13 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onPause()
         glView.onPause()
         jni.nativePause()
+        audioSystem.destroy()
     }
+
+    // Called from C++ via JNI (AudioManager bridge)
+    fun nativeAudioPlay(name: String) { audioSystem.play(name) }
+    fun nativeAudioStopAll() { audioSystem.stopAll() }
+    fun nativeAudioSetVolume(vol: Float) { audioSystem.setVolume(vol) }
+    fun nativeAudioPlayLoop(name: String) { audioSystem.playLoop(name) }
+    fun nativeAudioStopLoop() { audioSystem.stopLoop() }
 }

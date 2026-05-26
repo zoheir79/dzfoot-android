@@ -29,21 +29,28 @@ static AnimationPlayer gAnimPlayer;
 static AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
 static bool gAnimLoaded = false;
+static jobject gActivityObj = nullptr;
+static JavaVM* gJavaVM = nullptr;
 
 extern "C" {
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    gJavaVM = vm;
+    return JNI_VERSION_1_6;
+}
 
 JNIEXPORT jboolean JNICALL
 Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager, jboolean isEmulator) {
     gAssetManager = AAssetManager_fromJava(env, assetManager);
+    if (gActivityObj) env->DeleteGlobalRef(gActivityObj);
+    gActivityObj = env->NewGlobalRef(context); // MainActivity, has audio methods
     if (!runProtocolTests()) {
         LOGI("Protocol test FAILED — binary layout mismatch detected");
-        // Do not abort init; log and continue so dev can inspect
     }
     if (!gArManager.init(env, context, gAssetManager, isEmulator == JNI_TRUE)) {
         LOGI("ARManager init failed");
         return JNI_FALSE;
     }
-    // gRenderer.init() moved to nativeSurfaceCreated where GL context is active
     LOGI("Native init OK (emulator=%d)", isEmulator);
     return JNI_TRUE;
 }
@@ -234,4 +241,67 @@ Java_com_football_ar_JniBridge_nativeOnGameEvent(
 }
 
 } // extern "C"
+
+// ─── Audio helper used by AudioManager.cpp ─────────────────────
+
+static JNIEnv* getJniEnv() {
+    JNIEnv* env = nullptr;
+    if (gJavaVM && gJavaVM->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+        return env;
+    }
+    return nullptr;
+}
+
+void androidPlaySound(const char* name) {
+    JNIEnv* env = getJniEnv();
+    if (!env || !gActivityObj) return;
+    jclass cls = env->GetObjectClass(gActivityObj);
+    jmethodID mid = env->GetMethodID(cls, "nativeAudioPlay", "(Ljava/lang/String;)V");
+    if (mid) {
+        jstring jname = env->NewStringUTF(name);
+        env->CallVoidMethod(gActivityObj, mid, jname);
+        env->DeleteLocalRef(jname);
+    }
+    env->DeleteLocalRef(cls);
+}
+
+void androidStopAllSounds() {
+    JNIEnv* env = getJniEnv();
+    if (!env || !gActivityObj) return;
+    jclass cls = env->GetObjectClass(gActivityObj);
+    jmethodID mid = env->GetMethodID(cls, "nativeAudioStopAll", "()V");
+    if (mid) env->CallVoidMethod(gActivityObj, mid);
+    env->DeleteLocalRef(cls);
+}
+
+void androidSetVolume(float vol) {
+    JNIEnv* env = getJniEnv();
+    if (!env || !gActivityObj) return;
+    jclass cls = env->GetObjectClass(gActivityObj);
+    jmethodID mid = env->GetMethodID(cls, "nativeAudioSetVolume", "(F)V");
+    if (mid) env->CallVoidMethod(gActivityObj, mid, vol);
+    env->DeleteLocalRef(cls);
+}
+
+void androidPlayLoop(const char* name) {
+    JNIEnv* env = getJniEnv();
+    if (!env || !gActivityObj) return;
+    jclass cls = env->GetObjectClass(gActivityObj);
+    jmethodID mid = env->GetMethodID(cls, "nativeAudioPlayLoop", "(Ljava/lang/String;)V");
+    if (mid) {
+        jstring jname = env->NewStringUTF(name);
+        env->CallVoidMethod(gActivityObj, mid, jname);
+        env->DeleteLocalRef(jname);
+    }
+    env->DeleteLocalRef(cls);
+}
+
+void androidStopLoop() {
+    JNIEnv* env = getJniEnv();
+    if (!env || !gActivityObj) return;
+    jclass cls = env->GetObjectClass(gActivityObj);
+    jmethodID mid = env->GetMethodID(cls, "nativeAudioStopLoop", "()V");
+    if (mid) env->CallVoidMethod(gActivityObj, mid);
+    env->DeleteLocalRef(cls);
+}
  
