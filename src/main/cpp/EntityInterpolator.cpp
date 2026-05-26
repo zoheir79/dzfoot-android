@@ -1,5 +1,6 @@
 #include "EntityInterpolator.h"
 #include <cmath>
+#include <cstring>
 
 void EntityInterpolator::addState(const dzfoot::GameStatePacket& state) {
     head_ = (head_ + 1) % MAX_STATES;
