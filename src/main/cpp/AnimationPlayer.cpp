@@ -47,48 +47,87 @@ bool AnimationPlayer::isLooping(uint8_t animId) {
 // ─── Binary loader ───────────────────────────────────────────────
 
 bool AnimationPlayer::loadFromBinary(const uint8_t* data, size_t len) {
-    if (len < 12) return false;
+    if (len < 12) {
+        LOGE("Animation binary is too small (%zu bytes)", len);
+        return false;
+    }
     if (data[0] != 'D' || data[1] != 'Z' || data[2] != 'A' || data[3] != 'N') {
         LOGE("Invalid animation binary magic");
         return false;
     }
-    uint16_t version = *(uint16_t*)(data + 4);
-    uint16_t numClips = *(uint16_t*)(data + 6);
-    uint16_t numBones = *(uint16_t*)(data + 8);
+
+    uint16_t version = 0;
+    std::memcpy(&version, data + 4, sizeof(uint16_t));
     if (version != 1) {
         LOGE("Unsupported anim binary version %d", version);
         return false;
     }
+
+    uint16_t numClips = 0;
+    std::memcpy(&numClips, data + 6, sizeof(uint16_t));
+
+    uint16_t numBones = 0;
+    std::memcpy(&numBones, data + 8, sizeof(uint16_t));
+
     const uint8_t* p = data + 12;
+    const uint8_t* end = data + len;
+
     clips_.resize(numClips);
     for (int c = 0; c < numClips; ++c) {
+        if (p + 32 + 4 + 1 > end) {
+            LOGE("Animation binary malformed: unexpected EOF at clip %d", c);
+            clips_.clear();
+            return false;
+        }
+
         AnimClip& clip = clips_[c];
         clip.name = std::string((const char*)p, 32);
         // trim nulls
         size_t nul = clip.name.find('\0');
         if (nul != std::string::npos) clip.name.resize(nul);
         p += 32;
-        clip.duration = *(float*)p; p += 4;
-        uint8_t trackCount = *p; p += 1;
+
+        std::memcpy(&clip.duration, p, sizeof(float));
+        p += 4;
+
+        uint8_t trackCount = *p;
+        p += 1;
+
         clip.tracks.resize(trackCount);
         for (int t = 0; t < trackCount; ++t) {
+            if (p + 32 + 2 > end) {
+                LOGE("Animation binary malformed: unexpected EOF at track %d in clip %d", t, c);
+                clips_.clear();
+                return false;
+            }
+
             AnimTrack& track = clip.tracks[t];
             track.boneName = std::string((const char*)p, 32);
             size_t n = track.boneName.find('\0');
             if (n != std::string::npos) track.boneName.resize(n);
             p += 32;
-            uint16_t kfCount = *(uint16_t*)p; p += 2;
+
+            uint16_t kfCount = 0;
+            std::memcpy(&kfCount, p, sizeof(uint16_t));
+            p += 2;
+
+            if (p + kfCount * 36 > end) {
+                LOGE("Animation binary malformed: unexpected EOF for keyframes at track %d in clip %d", t, c);
+                clips_.clear();
+                return false;
+            }
+
             track.keyframes.resize(kfCount);
             for (int k = 0; k < kfCount; ++k) {
                 AnimKeyframe& kf = track.keyframes[k];
-                kf.time = *(float*)p; p += 4;
-                kf.pos[0] = *(float*)p; p += 4;
-                kf.pos[1] = *(float*)p; p += 4;
-                kf.pos[2] = *(float*)p; p += 4;
-                kf.rot[0] = *(float*)p; p += 4;
-                kf.rot[1] = *(float*)p; p += 4;
-                kf.rot[2] = *(float*)p; p += 4;
-                kf.rot[3] = *(float*)p; p += 4;
+                std::memcpy(&kf.time, p, sizeof(float)); p += 4;
+                std::memcpy(&kf.pos[0], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.pos[1], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.pos[2], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.rot[0], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.rot[1], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.rot[2], p, sizeof(float)); p += 4;
+                std::memcpy(&kf.rot[3], p, sizeof(float)); p += 4;
                 p += 4; // padding
             }
         }
