@@ -42,7 +42,10 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 JNIEXPORT jboolean JNICALL
 Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager, jboolean isEmulator) {
     gAssetManager = AAssetManager_fromJava(env, assetManager);
-    if (gActivityObj) env->DeleteGlobalRef(gActivityObj);
+    if (gActivityObj) {
+        env->DeleteGlobalRef(gActivityObj);
+        gActivityObj = nullptr;
+    }
     gActivityObj = env->NewGlobalRef(context); // MainActivity, has audio methods
     if (!runProtocolTests()) {
         LOGI("Protocol test FAILED — binary layout mismatch detected");
@@ -53,6 +56,18 @@ Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject con
     }
     LOGI("Native init OK (emulator=%d)", isEmulator);
     return JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeDestroy(JNIEnv* env, jobject thiz) {
+    if (gActivityObj) {
+        env->DeleteGlobalRef(gActivityObj);
+        gActivityObj = nullptr;
+    }
+    gRenderer.destroy();
+    gRendererInited = false;
+    gArManager.destroy();
+    LOGI("Native destroy OK");
 }
 
 JNIEXPORT void JNICALL
@@ -71,8 +86,10 @@ Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);  // Disabled: simpler debug, can enable once winding verified
+    
     // GL context is fresh on every surface creation (orientation, pause/resume).
     // Old programs/VAOs from prior context are invalid; recreate everything.
+    gRenderer.destroy(); // Free old GL resources safely
     gRenderer.init();
     gRendererInited = true;
     LOGI("Renderer init OK (GL context ready)");
@@ -151,22 +168,32 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         }
     }
 
-    // Update animation state (simple mapping from velocity)
-    static float animDt = 0.0f;
-    animDt += 0.016f; // assume ~60fps for now
-    gAnimPlayer.update(0.016f);
-    // Map player 0 velocity to animation id (demo logic)
+    // Update animation state (speed-adaptive cycle to avoid sliding)
     float vx = gs.players[0].vel[0];
     float vz = gs.players[0].vel[2];
-    float speed = std::sqrt(vx*vx + vz*vz);
+    float speedVal = std::sqrt(vx*vx + vz*vz);
+    
+    // Scale animation play rate dynamically based on current speed relative to a base
+    float animSpeedScale = 1.0f;
     uint8_t desiredAnim = 0;
-    if (speed < 0.1f) desiredAnim = 0; // idle
-    else if (speed < 2.0f) desiredAnim = 1; // walk
-    else desiredAnim = 2; // run
-    gAnimPlayer.play(desiredAnim);
+    if (speedVal < 0.1f) {
+        desiredAnim = 0; // idle
+        animSpeedScale = 1.0f;
+    } else if (speedVal < 2.0f) {
+        desiredAnim = 1; // walk
+        animSpeedScale = speedVal / 1.0f; // normalize walk speed
+    } else {
+        desiredAnim = 2; // run
+        animSpeedScale = speedVal / 4.0f; // normalize run speed
+    }
+    if (animSpeedScale < 0.2f) animSpeedScale = 0.2f;
+    if (animSpeedScale > 2.0f) animSpeedScale = 2.0f;
 
-    float boneMats[16 * 16]; // max 16 bones
-    int numBones = gAnimPlayer.evaluate(boneMats, 16);
+    gAnimPlayer.play(desiredAnim);
+    gAnimPlayer.update(0.016f * animSpeedScale);
+
+    float boneMats[32 * 16]; // max 32 bones, 16 floats per mat4
+    int numBones = gAnimPlayer.evaluate(boneMats, 32);
 
     float positions[66]; // 22 players * 3
     for (int i = 0; i < 22; ++i) {

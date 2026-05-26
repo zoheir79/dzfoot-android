@@ -254,7 +254,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     fun onGameStateReceived(data: ByteArray) {
-        latestGameState = data.copyOf()
+        synchronized(this) {
+            latestGameState = data.copyOf()
+        }
         if (data.size < 72) return
         // Parse binary GameStatePacket (offset 26 = score[2], offset 28 = timer float)
         val scoreA = data[26].toInt()
@@ -270,7 +272,10 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        jni.nativeOnFrame(viewMatrix, projMatrix, anchorMatrix, latestGameState)
+        val stateCopy = synchronized(this) {
+            latestGameState.copyOf()
+        }
+        jni.nativeOnFrame(viewMatrix, projMatrix, anchorMatrix, stateCopy)
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -293,6 +298,11 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView.onPause()
         jni.nativePause()
         audioSystem.destroy()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        jni.nativeDestroy()
     }
 
     // Called from C++ via JNI (AudioManager bridge)

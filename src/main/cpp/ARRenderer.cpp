@@ -40,7 +40,7 @@ layout(location = 3) in uvec4 a_BoneIndices;
 layout(location = 4) in vec4 a_BoneWeights;
 
 uniform mat4 u_ModelViewProj;
-uniform mat4 u_BoneMatrices[16];
+uniform mat4 u_BoneMatrices[32];
 
 out vec3 v_Normal;
 out vec2 v_TexCoord;

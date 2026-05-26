@@ -15,6 +15,7 @@ class JniBridge {
     external fun nativeOnGameStateReceived(data: ByteArray)
     external fun nativeOnGameEvent(data: ByteArray)
     external fun nativeInit(context: Context, assetManager: AssetManager, isEmulator: Boolean): Boolean
+    external fun nativeDestroy()
     external fun nativeResume(context: Context)
     external fun nativePause()
     external fun nativeSurfaceCreated()
