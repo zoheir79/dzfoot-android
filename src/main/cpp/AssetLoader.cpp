@@ -25,4 +25,16 @@ bool AssetLoader::exists(const char* path) {
     }
     return false;
 }
+
+std::vector<uint8_t> AssetLoader::loadAsBytes(AAssetManager* mgr, const char* path) {
+    std::vector<uint8_t> result;
+    if (!mgr) return result;
+    AAsset* asset = AAssetManager_open(mgr, path, AASSET_MODE_BUFFER);
+    if (!asset) return result;
+    const uint8_t* data = (const uint8_t*)AAsset_getBuffer(asset);
+    int len = AAsset_getLength(asset);
+    result.assign(data, data + len);
+    AAsset_close(asset);
+    return result;
+}
  

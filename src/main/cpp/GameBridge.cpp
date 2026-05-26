@@ -47,6 +47,35 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
         LOGE("Rejected GameState with NaN in player position");
         return;
     }
+
+    // Feed anti-lag systems
+    interpolator_.addState(state_);
+    float serverTimeMs = state_.tick * 50.0f; // 20 Hz
+    deadReckoning_.update(state_.ball, serverTimeMs);
+
+    // Server reconciliation stub: acknowledge up to this tick
+    float delta[3];
+    predictor_.acknowledge(state_.tick, state_.players[0], delta);
+}
+
+dzfoot::GameStatePacket GameBridge::getInterpolatedState() const {
+    dzfoot::GameStatePacket out = state_;
+    float latest = interpolator_.latestReceivedTimeMs();
+    float renderTime = latest - EntityInterpolator::INTERP_DELAY_MS;
+    if (renderTime < 0.0f) renderTime = 0.0f;
+    interpolator_.interpolate(renderTime, out);
+
+    // Blend dead-reckoned ball
+    dzfoot::NetworkBallState drBall;
+    deadReckoning_.tick(16.0f, drBall); // assume 16ms dt
+    // For now prefer interpolated ball; full blend can be added later
+    out.ball = drBall;
+    return out;
+}
+
+void GameBridge::tick(float dt) {
+    // Dead reckoning runs continuously each frame
+    // Other systems are event-driven or per-packet
 }
 
 void GameBridge::applyMatchEvent(const uint8_t* data, size_t len) {

@@ -3,11 +3,15 @@
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
 #include <GLES3/gl3.h>
+#include <vector>
+#include <cmath>
 
 #include "ARManager.h"
 #include "ARRenderer.h"
 #include "GameBridge.h"
 #include "InputManager.h"
+#include "AnimationPlayer.h"
+#include "AssetLoader.h"
 #include "protocol/DZFootProtocol.h"
 #include <cstring>
 
@@ -21,8 +25,10 @@ static ARManager gArManager;
 static ARRenderer gRenderer;
 static GameBridge gGameBridge;
 static InputManager gInputManager;
+static AnimationPlayer gAnimPlayer;
 static AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
+static bool gAnimLoaded = false;
 
 extern "C" {
 
@@ -110,7 +116,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     gRenderer.drawCameraBackground(gArManager);
 
     // Always render game (use fallback view if marker not tracked)
-    dzfoot::GameStatePacket& gs = const_cast<dzfoot::GameStatePacket&>(gGameBridge.currentState());
+    // Use interpolated state for smooth 20 Hz display
+    dzfoot::GameStatePacket gs = gGameBridge.getInterpolatedState();
 
     // If no remote game state, apply local input (offline mode)
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
@@ -127,13 +134,40 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         gs.ball.pos[2] = gs.players[0].pos[2];
     }
 
+    // Load animation binary once
+    if (!gAnimLoaded && gAssetManager) {
+        std::vector<uint8_t> animData = AssetLoader::loadAsBytes(gAssetManager, "anim_templates.bin");
+        if (!animData.empty()) {
+            gAnimPlayer.loadFromBinary(animData.data(), animData.size());
+            gAnimLoaded = true;
+            LOGI("Animation binary loaded");
+        }
+    }
+
+    // Update animation state (simple mapping from velocity)
+    static float animDt = 0.0f;
+    animDt += 0.016f; // assume ~60fps for now
+    gAnimPlayer.update(0.016f);
+    // Map player 0 velocity to animation id (demo logic)
+    float vx = gs.players[0].vel[0];
+    float vz = gs.players[0].vel[2];
+    float speed = std::sqrt(vx*vx + vz*vz);
+    uint8_t desiredAnim = 0;
+    if (speed < 0.1f) desiredAnim = 0; // idle
+    else if (speed < 2.0f) desiredAnim = 1; // walk
+    else desiredAnim = 2; // run
+    gAnimPlayer.play(desiredAnim);
+
+    float boneMats[16 * 16]; // max 16 bones
+    int numBones = gAnimPlayer.evaluate(boneMats, 16);
+
     float positions[66]; // 22 players * 3
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
         positions[i * 3 + 1] = gs.players[i].pos[1];
         positions[i * 3 + 2] = gs.players[i].pos[2];
     }
-    gRenderer.renderGameOnMarker(gArManager, positions, 22);
+    gRenderer.renderScene(gArManager, positions, 22, boneMats, numBones);
 }
 
 JNIEXPORT void JNICALL

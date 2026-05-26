@@ -3,54 +3,111 @@
 #include "Mesh.h"
 #include <android/log.h>
 #include <cmath>
+#include <cstring>
 
 #define LOG_TAG "ARRenderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static const char* CAMERA_VERT = R"(
-    attribute vec4 a_Position;
-    attribute vec2 a_TexCoord;
-    varying vec2 v_TexCoord;
-    void main() {
-        gl_Position = a_Position;
-        v_TexCoord = a_TexCoord;
-    }
+// ─── OpenGL ES 3.0 Shaders ────────────────────────────────────────
+
+static const char* CAMERA_VERT = R"(#version 300 es
+in vec2 a_Position;
+in vec2 a_TexCoord;
+out vec2 v_TexCoord;
+void main() {
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+    v_TexCoord = a_TexCoord;
+}
 )";
 
-static const char* CAMERA_FRAG = R"(
-    #extension GL_OES_EGL_image_external : require
-    precision mediump float;
-    uniform samplerExternalOES u_Texture;
-    varying vec2 v_TexCoord;
-    void main() {
-        gl_FragColor = texture2D(u_Texture, v_TexCoord);
-    }
+static const char* CAMERA_FRAG = R"(#version 300 es
+#extension GL_OES_EGL_image_external_essl3 : require
+precision mediump float;
+in vec2 v_TexCoord;
+out vec4 outColor;
+uniform samplerExternalOES u_Texture;
+void main() {
+    outColor = texture(u_Texture, v_TexCoord);
+}
 )";
 
-static const char* GAME_VERT = R"(
-    precision mediump float;
-    attribute vec3 a_Position;
-    attribute vec3 a_Normal;
-    varying vec3 v_Normal;
-    uniform mat4 u_ModelViewProj;
-    void main() {
-        v_Normal = a_Normal;
-        gl_Position = u_ModelViewProj * vec4(a_Position, 1.0);
-    }
+static const char* SKINNED_VERT = R"(#version 300 es
+precision mediump float;
+layout(location = 0) in vec3 a_Position;
+layout(location = 1) in vec3 a_Normal;
+layout(location = 2) in vec2 a_TexCoord;
+layout(location = 3) in uvec4 a_BoneIndices;
+layout(location = 4) in vec4 a_BoneWeights;
+
+uniform mat4 u_ModelViewProj;
+uniform mat4 u_BoneMatrices[16];
+
+out vec3 v_Normal;
+out vec2 v_TexCoord;
+
+void main() {
+    mat4 skinMatrix =
+        u_BoneMatrices[a_BoneIndices.x] * a_BoneWeights.x +
+        u_BoneMatrices[a_BoneIndices.y] * a_BoneWeights.y +
+        u_BoneMatrices[a_BoneIndices.z] * a_BoneWeights.z +
+        u_BoneMatrices[a_BoneIndices.w] * a_BoneWeights.w;
+
+    vec4 skinnedPos = skinMatrix * vec4(a_Position, 1.0);
+    vec4 skinnedNormal = skinMatrix * vec4(a_Normal, 0.0);
+
+    v_Normal = normalize(skinnedNormal.xyz);
+    v_TexCoord = a_TexCoord;
+    gl_Position = u_ModelViewProj * skinnedPos;
+}
 )";
 
-static const char* GAME_FRAG = R"(
-    precision mediump float;
-    varying vec3 v_Normal;
-    uniform vec3 u_Color;
-    void main() {
-        float light = max(dot(normalize(v_Normal), vec3(0.0, 1.0, 0.0)), 0.3);
-        gl_FragColor = vec4(u_Color * light, 1.0);
-    }
+static const char* SKINNED_FRAG = R"(#version 300 es
+precision mediump float;
+in vec3 v_Normal;
+in vec2 v_TexCoord;
+out vec4 outColor;
+uniform vec3 u_Color;
+void main() {
+    vec3 N = normalize(v_Normal);
+    vec3 L = normalize(vec3(0.2, 1.0, 0.3));
+    float diff = max(dot(N, L), 0.0);
+    float amb = 0.35;
+    outColor = vec4(u_Color * (diff + amb), 1.0);
+}
 )";
 
-// Column-major matrix multiplication: out = a * b
-// Where m[col*4+row] = m(row, col) in column-major storage.
+static const char* STATIC_VERT = R"(#version 300 es
+precision mediump float;
+layout(location = 0) in vec3 a_Position;
+layout(location = 1) in vec3 a_Normal;
+layout(location = 2) in vec2 a_TexCoord;
+uniform mat4 u_ModelViewProj;
+out vec3 v_Normal;
+out vec2 v_TexCoord;
+void main() {
+    v_Normal = a_Normal;
+    v_TexCoord = a_TexCoord;
+    gl_Position = u_ModelViewProj * vec4(a_Position, 1.0);
+}
+)";
+
+static const char* STATIC_FRAG = R"(#version 300 es
+precision mediump float;
+in vec3 v_Normal;
+in vec2 v_TexCoord;
+out vec4 outColor;
+uniform vec3 u_Color;
+void main() {
+    vec3 N = normalize(v_Normal);
+    vec3 L = normalize(vec3(0.2, 1.0, 0.3));
+    float diff = max(dot(N, L), 0.0);
+    float amb = 0.35;
+    outColor = vec4(u_Color * (diff + amb), 1.0);
+}
+)";
+
+// ─── Matrix utilities ────────────────────────────────────────────
+
 static void mat4Mul(const float* a, const float* b, float* out) {
     for (int col = 0; col < 4; ++col) {
         for (int row = 0; row < 4; ++row) {
@@ -62,9 +119,26 @@ static void mat4Mul(const float* a, const float* b, float* out) {
     }
 }
 
+static void mat4Identity(float* m) {
+    for (int i = 0; i < 16; ++i) m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+}
+
+static void mat4Translate(float* m, float x, float y, float z) {
+    mat4Identity(m);
+    m[12] = x; m[13] = y; m[14] = z;
+}
+
+static void mat4Scale(float* m, float x, float y, float z) {
+    mat4Identity(m);
+    m[0] = x; m[5] = y; m[10] = z;
+}
+
+// ─── ARRenderer implementation ───────────────────────────────────
+
 void ARRenderer::init() {
     cameraShader_ = Shader::compile(CAMERA_VERT, CAMERA_FRAG);
-    gameShader_   = Shader::compile(GAME_VERT, GAME_FRAG);
+    skinnedShader_ = Shader::compile(SKINNED_VERT, SKINNED_FRAG);
+    staticShader_ = Shader::compile(STATIC_VERT, STATIC_FRAG);
 
     glGenBuffers(1, &quadVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
@@ -75,24 +149,57 @@ void ARRenderer::init() {
     glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
 
-    // Init placeholder meshes - larger for TV broadcast view
-    playerMesh_.loadCube(0.6f);
-    ballMesh_.loadSphere(0.25f, 12, 12);
-    pitchMesh_.loadCube(1.0f);
+    // Build static scene graph
+    int root = scene_.addNode("root", -1);
+    int pitch = scene_.addNode("pitch", root);
+    scene_.nodes[pitch].staticMesh.loadCube(1.0f);
+    scene_.nodes[pitch].local.scale[0] = 11.0f;
+    scene_.nodes[pitch].local.scale[1] = 0.25f;
+    scene_.nodes[pitch].local.scale[2] = 5.0f;
+    scene_.nodes[pitch].local.position[1] = -0.1f;
+
+    int goalL = scene_.addNode("goalL", root);
+    scene_.nodes[goalL].staticMesh.loadCube(1.0f);
+    scene_.nodes[goalL].local.position[0] = -10.5f;
+    scene_.nodes[goalL].local.scale[0] = 0.5f;
+    scene_.nodes[goalL].local.scale[1] = 1.2f;
+    scene_.nodes[goalL].local.scale[2] = 3.0f;
+
+    int goalR = scene_.addNode("goalR", root);
+    scene_.nodes[goalR].staticMesh.loadCube(1.0f);
+    scene_.nodes[goalR].local.position[0] = 10.5f;
+    scene_.nodes[goalR].local.scale[0] = 0.5f;
+    scene_.nodes[goalR].local.scale[1] = 1.2f;
+    scene_.nodes[goalR].local.scale[2] = 3.0f;
+
+    int ball = scene_.addNode("ball", root);
+    scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
+    scene_.nodes[ball].local.position[1] = 0.25f;
+
+    scene_.update();
 }
 
 void ARRenderer::destroy() {
     Shader::destroy(cameraShader_);
-    Shader::destroy(gameShader_);
+    Shader::destroy(skinnedShader_);
+    Shader::destroy(staticShader_);
     if (quadVbo_) glDeleteBuffers(1, &quadVbo_);
     if (uvVbo_) glDeleteBuffers(1, &uvVbo_);
-    playerMesh_.destroy();
-    ballMesh_.destroy();
-    pitchMesh_.destroy();
+    for (auto& node : scene_.nodes) {
+        node.skinnedMesh.destroy();
+        node.staticMesh.destroy();
+    }
+}
+
+void ARRenderer::setPlayerMesh(const SkinnedMesh& mesh) {
+    // Store mesh in scene graph for later cloning per player
+    int playerNode = scene_.addNode("playerBase", scene_.findNode("root"));
+    scene_.nodes[playerNode].skinnedMesh = mesh;
+    scene_.nodes[playerNode].useSkinning = true;
 }
 
 void ARRenderer::drawCameraBackground(ARManager& ar) {
-    if (ar.getCameraTextureId() == 0) return; // No camera in fallback mode
+    if (ar.getCameraTextureId() == 0) return;
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
@@ -118,110 +225,87 @@ void ARRenderer::drawCameraBackground(ARManager& ar) {
     glDepthMask(GL_TRUE);
 }
 
-// Forward decl: fallback view (TV broadcast) used when no AR marker is tracked
-static void buildFallbackView(float* m);
-
-void ARRenderer::renderGameOnMarker(ARManager& ar, const float* playerPositions, int numPlayers) {
+void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int numPlayers,
+                               const float* boneMatrices, int numBones) {
     bool tracked = ar.isMarkerTracked();
     ARPose anchorPose = ar.getMarkerAnchorPose();
-    // Fallback anchor when no real marker: place the pitch in front of and
-    // below the AR camera so it's visible from the device's start pose.
-    // Column-major translation matrix.
     float fallbackAnchor[16] = {
         1,0,0,0,
         0,1,0,0,
         0,0,1,0,
-        0.0f, -1.5f, -8.0f, 1.0f   // 8m in front (-Z), 1.5m below (-Y)
+        0.0f, -1.5f, -8.0f, 1.0f
     };
     const float* anchorMat = anchorPose.valid ? anchorPose.matrix : fallbackAnchor;
 
     float view[16], proj[16];
-    // ARManager.getViewMatrix returns the real ARCore camera pose if session is
-    // alive (so moving the emulator/device updates it). It falls back to a
-    // fixed broadcast lookAt only when no AR session exists at all.
     ar.getViewMatrix(view);
     ar.getProjectionMatrix(proj, 0.01f, 100.0f);
 
-    Shader::use(gameShader_);
-    GLint mvpLoc = glGetUniformLocation(gameShader_, "u_ModelViewProj");
-    GLint colLoc = glGetUniformLocation(gameShader_, "u_Color");
+    // Combine ARCore view/proj with marker anchor
+    float vp[16];
+    mat4Mul(proj, view, vp);
 
-    // mat4Mul(A, B, OUT) computes OUT = A * B in column-major.
-    // Final MVP = proj * view * anchor * model.
+    // Update scene graph root to anchor
+    int rootIdx = scene_.findNode("root");
+    if (rootIdx >= 0) {
+        std::memcpy(scene_.nodes[rootIdx].worldMatrix, anchorMat, 16*sizeof(float));
+        scene_.update();
+    }
 
-    // Render pitch
-    float pitchM[16], tmp[16], mvp[16];
-    for (int j=0;j<16;++j) pitchM[j] = (j%5==0)?1.0f:0.0f;
-    pitchM[12] = 0.0f; pitchM[13] = -0.1f; pitchM[14] = 0.0f;
-    pitchM[0] = 11.0f; pitchM[5] = 0.25f; pitchM[10] = 5.0f;  // scale: 22m x 0.5m x 10m
-    mat4Mul(view, anchorMat, tmp);     // tmp = view * anchor
-    mat4Mul(tmp, pitchM, mvp);         // mvp = view * anchor * model
-    mat4Mul(proj, mvp, tmp);           // tmp = proj * view * anchor * model
-    glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
-    glUniform3f(colLoc, 0.15f, 0.45f, 0.15f);
-    pitchMesh_.draw();
+    renderStaticObjects(vp);
+    renderPlayers(vp, playerPositions, numPlayers, boneMatrices, numBones);
+}
 
-    // Render players
+void ARRenderer::renderStaticObjects(const float* viewProj) {
+    Shader::use(staticShader_);
+    GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
+    GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
+
+    for (auto& node : scene_.nodes) {
+        if (node.useSkinning || !node.visible) continue;
+        if (!node.staticMesh.hasData()) continue;
+
+        float mvp[16];
+        mat4Mul(viewProj, node.worldMatrix, mvp);
+        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
+
+        if (node.name == "pitch") glUniform3f(colLoc, 0.15f, 0.45f, 0.15f);
+        else if (node.name.find("goal") == 0) glUniform3f(colLoc, 0.9f, 0.9f, 0.9f);
+        else if (node.name == "ball") glUniform3f(colLoc, 1.0f, 0.9f, 0.1f);
+        else glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
+
+        node.staticMesh.draw();
+    }
+}
+
+void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
+                              const float* boneMatrices, int numBones) {
+    int baseIdx = scene_.findNode("playerBase");
+    if (baseIdx < 0 || !scene_.nodes[baseIdx].skinnedMesh.hasData()) return;
+
+    Shader::use(skinnedShader_);
+    GLint mvpLoc = glGetUniformLocation(skinnedShader_, "u_ModelViewProj");
+    GLint colLoc = glGetUniformLocation(skinnedShader_, "u_Color");
+    GLint boneLoc = glGetUniformLocation(skinnedShader_, "u_BoneMatrices");
+
+    if (boneMatrices && numBones > 0) {
+        glUniformMatrix4fv(boneLoc, numBones, GL_FALSE, boneMatrices);
+    }
+
     for (int i = 0; i < numPlayers; ++i) {
         float model[16];
-        for (int j = 0; j < 16; ++j) model[j] = (j % 5 == 0) ? 1.0f : 0.0f;
+        mat4Identity(model);
         model[12] = playerPositions[i * 3 + 0];
         model[13] = playerPositions[i * 3 + 1] + 0.3f;
         model[14] = playerPositions[i * 3 + 2];
 
-        mat4Mul(view, anchorMat, tmp);
-        mat4Mul(tmp, model, mvp);
-        mat4Mul(proj, mvp, tmp);
-        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
+        float mvp[16];
+        mat4Mul(viewProj, model, mvp);
+        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
 
         bool teamA = (i < 11);
         glUniform3f(colLoc, teamA ? 0.0f : 1.0f, teamA ? 0.5f : 0.0f, teamA ? 1.0f : 0.0f);
-        playerMesh_.draw();
+        scene_.nodes[baseIdx].skinnedMesh.draw();
     }
-
-    // Render ball
-    float ballM[16];
-    for (int j=0;j<16;++j) ballM[j]=(j%5==0)?1.0f:0.0f;
-    ballM[12] = 0.0f; ballM[13] = 0.25f; ballM[14] = 0.0f;
-    mat4Mul(view, anchorMat, tmp);
-    mat4Mul(tmp, ballM, mvp);
-    mat4Mul(proj, mvp, tmp);
-    glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, tmp);
-    glUniform3f(colLoc, 1.0f, 0.9f, 0.1f);
-    ballMesh_.draw();
-}
-
-// Build a column-major lookAt view for the TV broadcast fallback view
-static void buildFallbackView(float* m) {
-    // Camera position: above and behind looking at origin
-    float ex = 0.0f, ey = 8.0f, ez = 14.0f;
-    float cx = 0.0f, cy = 0.0f, cz = 0.0f;
-    float upx = 0.0f, upy = 1.0f, upz = 0.0f;
-
-    // forward = normalize(center - eye)
-    float fx = cx - ex, fy = cy - ey, fz = cz - ez;
-    float fl = sqrtf(fx*fx + fy*fy + fz*fz);
-    fx /= fl; fy /= fl; fz /= fl;
-
-    // s = normalize(forward x up)
-    float sx = fy*upz - fz*upy;
-    float sy = fz*upx - fx*upz;
-    float sz = fx*upy - fy*upx;
-    float sl = sqrtf(sx*sx + sy*sy + sz*sz);
-    sx /= sl; sy /= sl; sz /= sl;
-
-    // u = s x forward
-    float ux = sy*fz - sz*fy;
-    float uy = sz*fx - sx*fz;
-    float uz = sx*fy - sy*fx;
-
-    // Column-major: m[col*4+row]
-    m[0]=sx;   m[1]=ux;   m[2]=-fx;  m[3]=0;
-    m[4]=sy;   m[5]=uy;   m[6]=-fy;  m[7]=0;
-    m[8]=sz;   m[9]=uz;   m[10]=-fz; m[11]=0;
-    m[12]=-(sx*ex + sy*ey + sz*ez);
-    m[13]=-(ux*ex + uy*ey + uz*ez);
-    m[14]=-(fx*ex + fy*ey + fz*ez);
-    m[15]=1;
 }
  

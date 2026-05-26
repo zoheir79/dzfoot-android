@@ -24,6 +24,11 @@ add_library(football_ar SHARED
     AnimationPlayer.cpp
     InputManager.cpp
     GLBLoader.cpp
+    SceneGraph.cpp
+    Camera.cpp
+    EntityInterpolator.cpp
+    PredictionBuffer.cpp
+    DeadReckoning.cpp
     tests/test_protocol_layout.cpp
 )
 
