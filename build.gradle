@@ -14,14 +14,14 @@ android {
     defaultConfig {
         applicationId "com.football.ar"
         minSdk 24
-        targetSdk 31
+        targetSdk 34
         versionCode 1
         versionName "1.0"
 
         externalNativeBuild {
             cmake {
-                arguments "-DARCORE_LIBPATH=${buildDir}/arcore-native/jni",
-                          "-DARCORE_INCLUDE=${buildDir}/arcore-native/include"
+                arguments "-DARCORE_LIBPATH=${layout.buildDirectory.get().asFile}/arcore-native/jni",
+                          "-DARCORE_INCLUDE=${layout.buildDirectory.get().asFile}/arcore-native/include"
             }
         }
     }
@@ -52,22 +52,22 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.3.1'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.3.1'
-    implementation 'io.livekit:livekit-android:2.4.0'
-    implementation 'com.google.ar:core:1.31.0'
-    natives 'com.google.ar:core:1.31.0'
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.10.0'
+    implementation 'io.livekit:livekit-android:2.25.3'
+    implementation 'com.google.ar:core:1.54.0'
+    natives 'com.google.ar:core:1.54.0'
 }
 
-task extractNativeLibraries() {
+tasks.register('extractNativeLibraries') {
     inputs.files configurations.natives
-    outputs.dir "${buildDir}/arcore-native"
+    outputs.dir layout.buildDirectory.dir("arcore-native")
     doLast {
         configurations.natives.each { f ->
             if (f.name.contains("core") && f.name.endsWith(".aar")) {
                 copy {
                     from zipTree(f)
-                    into "${buildDir}/arcore-native"
+                    into layout.buildDirectory.dir("arcore-native")
                     include "jni/**/*"
                     include "**/*.h"
                 }
