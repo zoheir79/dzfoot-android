@@ -309,6 +309,8 @@ void ARRenderer::init() {
     if (!loadStaticGLB("stadium_test.glb", scene_.nodes[stadium].staticMesh)) {
         LOGE("Could not load stadium_test.glb, stadium will not be rendered");
     }
+    // Mask stadium temporarily to focus on pitch, goals, ball and players
+    scene_.nodes[stadium].visible = false;
 
     // 5. Player Base skinned mesh
     SkinnedMesh playerMesh;
