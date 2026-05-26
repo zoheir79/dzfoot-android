@@ -149,7 +149,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun createMatchAndConnect() {
         Thread {
             try {
-                val url = java.net.URL("http://10.0.2.2:8002/internal/create-match")
+                val url = java.net.URL("http://102.220.31.70:8002/internal/create-match")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
