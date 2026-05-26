@@ -20,6 +20,7 @@ class Mesh {
 public:
     void loadCube(float size);
     void loadSphere(float radius, int stacks, int slices);
+    void upload(const std::vector<Vertex>& verts, const std::vector<uint16_t>& indices);
     void draw() const;
     void destroy();
     bool hasData() const { return vao_ != 0; }
@@ -27,6 +28,7 @@ public:
 private:
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
+    GLuint ibo_ = 0;
     GLsizei count_ = 0;
 };
 

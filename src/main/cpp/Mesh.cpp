@@ -76,17 +76,46 @@ void Mesh::loadSphere(float radius, int stacks, int slices) {
     count_ = static_cast<GLsizei>(triVerts.size());
 }
 
+void Mesh::upload(const std::vector<Vertex>& verts, const std::vector<uint16_t>& indices) {
+    destroy();
+    glGenVertexArrays(1, &vao_);
+    glGenBuffers(1, &vbo_);
+    glGenBuffers(1, &ibo_);
+
+    glBindVertexArray(vao_);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint16_t), indices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+    glEnableVertexAttribArray(2);
+
+    count_ = static_cast<GLsizei>(indices.size());
+}
+
 void Mesh::draw() const {
     if (vao_) {
         glBindVertexArray(vao_);
-        glDrawArrays(GL_TRIANGLES, 0, count_);
+        if (ibo_) {
+            glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_SHORT, nullptr);
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0, count_);
+        }
     }
 }
 
 void Mesh::destroy() {
+    if (ibo_) glDeleteBuffers(1, &ibo_);
     if (vbo_) glDeleteBuffers(1, &vbo_);
     if (vao_) glDeleteVertexArrays(1, &vao_);
-    vbo_ = vao_ = 0;
+    ibo_ = vbo_ = vao_ = 0;
     count_ = 0;
 }
 

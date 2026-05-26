@@ -1,12 +1,127 @@
 #include "ARRenderer.h"
 #include "Shader.h"
 #include "Mesh.h"
+#include "GLBLoader.h"
+#include "AssetLoader.h"
 #include <android/log.h>
 #include <cmath>
 #include <cstring>
 
 #define LOG_TAG "ARRenderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+extern AAssetManager* gAssetManager;
+
+static bool loadStaticGLB(const char* filename, Mesh& outMesh) {
+    if (!gAssetManager) return false;
+    std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, filename);
+    if (bytes.empty()) {
+        LOGE("Failed to read asset: %s", filename);
+        return false;
+    }
+
+    GLBLoader loader;
+    GLBScene scene;
+    if (!loader.load(bytes.data(), bytes.size(), scene)) {
+        LOGE("Failed to parse GLB: %s", filename);
+        return false;
+    }
+
+    std::vector<Vertex> allVerts;
+    std::vector<uint16_t> allIndices;
+
+    for (const auto& mesh : scene.meshes) {
+        for (const auto& prim : mesh.primitives) {
+            uint16_t indexOffset = static_cast<uint16_t>(allVerts.size());
+            for (const auto& sv : prim.vertices) {
+                Vertex v;
+                std::memcpy(v.pos, sv.pos, sizeof(float) * 3);
+                std::memcpy(v.normal, sv.normal, sizeof(float) * 3);
+                std::memcpy(v.uv, sv.uv, sizeof(float) * 2);
+                allVerts.push_back(v);
+            }
+            for (auto idx : prim.indices) {
+                allIndices.push_back(idx + indexOffset);
+            }
+        }
+    }
+
+    if (!allVerts.empty()) {
+        outMesh.upload(allVerts, allIndices);
+        LOGI("Successfully loaded static GLB mesh: %s", filename);
+        return true;
+    }
+    return false;
+}
+
+static bool loadSkinnedGLB(const char* filename, SkinnedMesh& outMesh) {
+    if (!gAssetManager) return false;
+    std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, filename);
+    if (bytes.empty()) {
+        LOGE("Failed to read asset: %s", filename);
+        return false;
+    }
+
+    GLBLoader loader;
+    GLBScene scene;
+    if (!loader.load(bytes.data(), bytes.size(), scene)) {
+        LOGE("Failed to parse GLB: %s", filename);
+        return false;
+    }
+
+    std::vector<SkinnedVertex> allVerts;
+    std::vector<uint16_t> allIndices;
+
+    for (const auto& mesh : scene.meshes) {
+        for (const auto& prim : mesh.primitives) {
+            uint16_t indexOffset = static_cast<uint16_t>(allVerts.size());
+            for (const auto& sv : prim.vertices) {
+                allVerts.push_back(sv);
+            }
+            for (auto idx : prim.indices) {
+                allIndices.push_back(idx + indexOffset);
+            }
+        }
+    }
+
+    if (!allVerts.empty()) {
+        outMesh.upload(allVerts, allIndices);
+        LOGI("Successfully loaded skinned GLB mesh: %s", filename);
+        return true;
+    }
+    return false;
+}
+
+static void loadFallbackSkinnedPlayer(SkinnedMesh& outMesh) {
+    std::vector<SkinnedVertex> verts;
+    std::vector<uint16_t> indices;
+
+    float h = 0.25f;
+    auto addFace = [&](float nx, float ny, float nz, 
+                       float x1, float y1, float z1,
+                       float x2, float y2, float z2, 
+                       float x3, float y3, float z3,
+                       float x4, float y4, float z4) {
+        uint16_t offset = static_cast<uint16_t>(verts.size());
+        SkinnedVertex v1 = {{x1,y1,z1}, {nx,ny,nz}, {0,0}, {0,0,0,0}, {1,0,0,0}};
+        SkinnedVertex v2 = {{x2,y2,z2}, {nx,ny,nz}, {1,0}, {0,0,0,0}, {1,0,0,0}};
+        SkinnedVertex v3 = {{x3,y3,z3}, {nx,ny,nz}, {1,1}, {0,0,0,0}, {1,0,0,0}};
+        SkinnedVertex v4 = {{x4,y4,z4}, {nx,ny,nz}, {0,1}, {0,0,0,0}, {1,0,0,0}};
+        verts.push_back(v1); verts.push_back(v2); verts.push_back(v3); verts.push_back(v4);
+        indices.push_back(offset + 0); indices.push_back(offset + 1); indices.push_back(offset + 2);
+        indices.push_back(offset + 0); indices.push_back(offset + 2); indices.push_back(offset + 3);
+    };
+
+    addFace(0,0,1, -h,-h,h, h,-h,h, h,h,h, -h,h,h);
+    addFace(0,0,-1, h,-h,-h, -h,-h,-h, -h,h,-h, h,h,-h);
+    addFace(-1,0,0, -h,-h,-h, -h,-h,h, -h,h,h, -h,h,-h);
+    addFace(1,0,0, h,-h,h, h,-h,-h, h,h,-h, h,h,h);
+    addFace(0,1,0, -h,h,h, h,h,h, h,h,-h, -h,h,-h);
+    addFace(0,-1,0, -h,-h,-h, h,-h,-h, h,-h,h, -h,-h,h);
+
+    outMesh.upload(verts, indices);
+}
 
 // ─── OpenGL ES 3.0 Shaders ────────────────────────────────────────
 
@@ -151,30 +266,59 @@ void ARRenderer::init() {
 
     // Build static scene graph
     int root = scene_.addNode("root", -1);
+    
+    // 1. Terrain (pitch)
     int pitch = scene_.addNode("pitch", root);
-    scene_.nodes[pitch].staticMesh.loadCube(1.0f);
-    scene_.nodes[pitch].local.scale[0] = 11.0f;
-    scene_.nodes[pitch].local.scale[1] = 0.25f;
-    scene_.nodes[pitch].local.scale[2] = 5.0f;
-    scene_.nodes[pitch].local.position[1] = -0.1f;
+    if (!loadStaticGLB("pitch.glb", scene_.nodes[pitch].staticMesh)) {
+        LOGE("Could not load pitch.glb, falling back to loadCube");
+        scene_.nodes[pitch].staticMesh.loadCube(1.0f);
+        scene_.nodes[pitch].local.scale[0] = 11.0f;
+        scene_.nodes[pitch].local.scale[1] = 0.25f;
+        scene_.nodes[pitch].local.scale[2] = 5.0f;
+        scene_.nodes[pitch].local.position[1] = -0.1f;
+    }
 
+    // 2. Goals
     int goalL = scene_.addNode("goalL", root);
-    scene_.nodes[goalL].staticMesh.loadCube(1.0f);
-    scene_.nodes[goalL].local.position[0] = -10.5f;
-    scene_.nodes[goalL].local.scale[0] = 0.5f;
-    scene_.nodes[goalL].local.scale[1] = 1.2f;
-    scene_.nodes[goalL].local.scale[2] = 3.0f;
+    if (!loadStaticGLB("goals.glb", scene_.nodes[goalL].staticMesh)) {
+        LOGE("Could not load goals.glb, falling back to loadCube");
+        scene_.nodes[goalL].staticMesh.loadCube(1.0f);
+        scene_.nodes[goalL].local.position[0] = -10.5f;
+        scene_.nodes[goalL].local.scale[0] = 0.5f;
+        scene_.nodes[goalL].local.scale[1] = 1.2f;
+        scene_.nodes[goalL].local.scale[2] = 3.0f;
 
-    int goalR = scene_.addNode("goalR", root);
-    scene_.nodes[goalR].staticMesh.loadCube(1.0f);
-    scene_.nodes[goalR].local.position[0] = 10.5f;
-    scene_.nodes[goalR].local.scale[0] = 0.5f;
-    scene_.nodes[goalR].local.scale[1] = 1.2f;
-    scene_.nodes[goalR].local.scale[2] = 3.0f;
+        int goalR = scene_.addNode("goalR", root);
+        scene_.nodes[goalR].staticMesh.loadCube(1.0f);
+        scene_.nodes[goalR].local.position[0] = 10.5f;
+        scene_.nodes[goalR].local.scale[0] = 0.5f;
+        scene_.nodes[goalR].local.scale[1] = 1.2f;
+        scene_.nodes[goalR].local.scale[2] = 3.0f;
+    }
 
+    // 3. Ball
     int ball = scene_.addNode("ball", root);
-    scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
-    scene_.nodes[ball].local.position[1] = 0.25f;
+    if (!loadStaticGLB("ball.glb", scene_.nodes[ball].staticMesh)) {
+        LOGE("Could not load ball.glb, falling back to loadSphere");
+        scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
+        scene_.nodes[ball].local.position[1] = 0.25f;
+    }
+
+    // 4. Stadium
+    int stadium = scene_.addNode("stadium", root);
+    if (!loadStaticGLB("stadium_test.glb", scene_.nodes[stadium].staticMesh)) {
+        LOGE("Could not load stadium_test.glb, stadium will not be rendered");
+    }
+
+    // 5. Player Base skinned mesh
+    SkinnedMesh playerMesh;
+    if (loadSkinnedGLB("player_base.glb", playerMesh)) {
+        setPlayerMesh(playerMesh);
+    } else {
+        LOGE("Could not load player_base.glb, falling back to skinned cube");
+        loadFallbackSkinnedPlayer(playerMesh);
+        setPlayerMesh(playerMesh);
+    }
 
     scene_.update();
 }

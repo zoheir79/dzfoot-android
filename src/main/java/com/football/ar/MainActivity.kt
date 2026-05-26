@@ -36,6 +36,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
 
+        // Initialize JNI and AssetManager immediately before GLSurfaceView starts rendering
+        jni.nativeInit(this, assets, isEmulator())
+
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
             setRenderer(this@MainActivity)

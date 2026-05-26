@@ -26,7 +26,7 @@ static ARRenderer gRenderer;
 static GameBridge gGameBridge;
 static InputManager gInputManager;
 static AnimationPlayer gAnimPlayer;
-static AAssetManager* gAssetManager = nullptr;
+AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
 static bool gAnimLoaded = false;
 static jobject gActivityObj = nullptr;
