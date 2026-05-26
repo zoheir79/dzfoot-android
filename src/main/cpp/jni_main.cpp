@@ -129,8 +129,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     env->ReleaseFloatArrayElements(projMat, proj, 0);
     env->ReleaseFloatArrayElements(anchorMat, anchor, 0);
 
-    // Apply game state if present
-    if (gameStateData) {
+    // Apply game state if present and not empty
+    if (gameStateData && env->GetArrayLength(gameStateData) > 0) {
         jbyte* state = env->GetByteArrayElements(gameStateData, nullptr);
         gGameBridge.applyGameState((const uint8_t*)state, env->GetArrayLength(gameStateData));
         env->ReleaseByteArrayElements(gameStateData, state, JNI_ABORT);
