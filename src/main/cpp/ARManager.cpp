@@ -205,10 +205,10 @@ void ARManager::getViewMatrix(float* out) const {
     if (camera_) {
         ArCamera_getViewMatrix(session_, camera_, out);
     } else {
-        // Fallback camera: TV broadcast view of football pitch
-        // Camera positioned high and back to see entire pitch in perspective
-        lookAt(out, 0.0f, 8.0f, 14.0f,   // eye: behind and above
-                     0.0f, 0.0f, 0.0f,    // center: middle of pitch
+        // Fallback camera: elevated TV broadcast view of the whole pitch.
+        // High and back (~42 deg down) so all 22 players and the full field fit.
+        lookAt(out, 0.0f, 8.0f, 9.0f,     // eye: high and behind
+                     0.0f, 0.0f, -0.5f,   // center: slightly past midfield
                      0.0f, 1.0f, 0.0f);   // up: Y is up
     }
 }

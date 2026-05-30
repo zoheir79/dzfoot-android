@@ -76,7 +76,7 @@ void Mesh::loadSphere(float radius, int stacks, int slices) {
     count_ = static_cast<GLsizei>(triVerts.size());
 }
 
-void Mesh::upload(const std::vector<Vertex>& verts, const std::vector<uint16_t>& indices) {
+void Mesh::upload(const std::vector<Vertex>& verts, const std::vector<uint32_t>& indices) {
     destroy();
     glGenVertexArrays(1, &vao_);
     glGenBuffers(1, &vbo_);
@@ -88,7 +88,7 @@ void Mesh::upload(const std::vector<Vertex>& verts, const std::vector<uint16_t>&
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint16_t), indices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
     glEnableVertexAttribArray(0);
@@ -104,7 +104,7 @@ void Mesh::draw() const {
     if (vao_) {
         glBindVertexArray(vao_);
         if (ibo_) {
-            glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_SHORT, nullptr);
+            glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_INT, nullptr);
         } else {
             glDrawArrays(GL_TRIANGLES, 0, count_);
         }
@@ -121,7 +121,7 @@ void Mesh::destroy() {
 
 // ─── SkinnedMesh ───────────────────────────────────────────────────
 
-void SkinnedMesh::upload(const std::vector<SkinnedVertex>& verts, const std::vector<uint16_t>& indices) {
+void SkinnedMesh::upload(const std::vector<SkinnedVertex>& verts, const std::vector<uint32_t>& indices) {
     destroy();
     glGenVertexArrays(1, &vao_);
     glGenBuffers(1, &vbo_);
@@ -133,7 +133,7 @@ void SkinnedMesh::upload(const std::vector<SkinnedVertex>& verts, const std::vec
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(SkinnedVertex), verts.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint16_t), indices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_STATIC_DRAW);
 
     // pos
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SkinnedVertex), (void*)offsetof(SkinnedVertex, pos));
@@ -157,7 +157,7 @@ void SkinnedMesh::upload(const std::vector<SkinnedVertex>& verts, const std::vec
 void SkinnedMesh::draw() const {
     if (vao_ && count_ > 0) {
         glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_SHORT, nullptr);
+        glDrawElements(GL_TRIANGLES, count_, GL_UNSIGNED_INT, nullptr);
     }
 }
 

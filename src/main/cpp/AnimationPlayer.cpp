@@ -269,20 +269,21 @@ void AnimationPlayer::evaluateClip(const AnimClip& clip, float t, float* outPos,
     }
 }
 
-int AnimationPlayer::evaluate(float* boneMatrices, int maxBones) const {
+int AnimationPlayer::evaluateState(uint8_t current, uint8_t previous, float blend, float time, float prevTime,
+                                  float* boneMatrices, int maxBones) const {
     if (clips_.empty() || maxBones < 14) return 0;
 
-    const AnimClip& curClip = clips_[current_];
-    const AnimClip& prevClip = clips_[previous_];
+    const AnimClip& curClip = clips_[current >= clips_.size() ? 0 : current];
+    const AnimClip& prevClip = clips_[previous >= clips_.size() ? 0 : previous];
 
-    float tCur = time_;
-    float tPrev = prevTime_;
-    if (isLooping(current_)) {
-        float dur = getDuration(current_);
+    float tCur = time;
+    float tPrev = prevTime;
+    if (isLooping(current)) {
+        float dur = getDuration(current);
         if (dur > 0.0f) tCur = std::fmod(tCur, dur);
     }
-    if (isLooping(previous_)) {
-        float dur = getDuration(previous_);
+    if (isLooping(previous)) {
+        float dur = getDuration(previous);
         if (dur > 0.0f) tPrev = std::fmod(tPrev, dur);
     }
 
@@ -302,15 +303,18 @@ int AnimationPlayer::evaluate(float* boneMatrices, int maxBones) const {
         evaluateClip(prevClip, tPrev, posB, rotB, boneNames[i]);
 
         float pos[3], rot[4];
-        lerpVec3(posB, posA, blend_, pos);
-        slerp(rotB, rotA, blend_, rot);
+        lerpVec3(posB, posA, blend, pos);
+        slerp(rotB, rotA, blend, rot);
 
         float rM[16];
         quatToMat4(rot, rM);
-        // Add translation
         rM[12] = pos[0]; rM[13] = pos[1]; rM[14] = pos[2];
         std::memcpy(boneMatrices + i*16, rM, 16*sizeof(float));
     }
     return 14;
+}
+
+int AnimationPlayer::evaluate(float* boneMatrices, int maxBones) const {
+    return evaluateState(current_, previous_, blend_, time_, prevTime_, boneMatrices, maxBones);
 }
 

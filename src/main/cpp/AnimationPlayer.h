@@ -41,6 +41,12 @@ public:
     // Returns number of bones written.
     int evaluate(float* boneMatrices, int maxBones) const;
 
+    // Evaluate a custom animation state (e.g. for independent player rigs)
+    int evaluateState(uint8_t current, uint8_t previous, float blend, float time, float prevTime,
+                      float* boneMatrices, int maxBones) const;
+
+    int findBoneIndex(const std::string& name) const;
+
     uint8_t currentAnim() const { return current_; }
     float currentTime() const { return time_; }
 
@@ -65,5 +71,4 @@ private:
 
     void evaluateClip(const AnimClip& clip, float t, float* outPos, float* outRot,
                       const std::string& boneName) const;
-    int findBoneIndex(const std::string& name) const;
 };

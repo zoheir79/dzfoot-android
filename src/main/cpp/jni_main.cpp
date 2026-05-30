@@ -111,8 +111,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     if (!gArManager.update()) return;
 
-    // Clear screen (sky blue background for fallback mode)
-    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    // Clear screen (vivid stadium sky blue gradient)
+    glClearColor(0.45f, 0.72f, 0.95f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Get AR matrices
@@ -192,8 +192,18 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     gAnimPlayer.play(desiredAnim);
     gAnimPlayer.update(0.016f * animSpeedScale);
 
-    float boneMats[32 * 16]; // max 32 bones, 16 floats per mat4
-    int numBones = gAnimPlayer.evaluate(boneMats, 32);
+    // NOTE: Skeletal skinning (hierarchical bone accumulation + inverse bind
+    // matrices) is not yet implemented, so the animation bone matrices would
+    // collapse the mesh and make players invisible. Until full skinning lands,
+    // render players in BIND POSE by passing identity bone matrices:
+    //   skinMatrix = I * (w0+w1+w2+w3) = I  =>  skinnedPos = a_Position
+    constexpr int kNumBones = 14;
+    float boneMats[32 * 16];
+    for (int b = 0; b < kNumBones; ++b) {
+        float* m = boneMats + b * 16;
+        for (int j = 0; j < 16; ++j) m[j] = (j % 5 == 0) ? 1.0f : 0.0f;
+    }
+    int numBones = kNumBones;
 
     float positions[66]; // 22 players * 3
     for (int i = 0; i < 22; ++i) {
@@ -201,7 +211,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         positions[i * 3 + 1] = gs.players[i].pos[1];
         positions[i * 3 + 2] = gs.players[i].pos[2];
     }
-    gRenderer.renderScene(gArManager, positions, 22, boneMats, numBones);
+    float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
+    gRenderer.renderScene(gArManager, positions, 22, ballPos, boneMats, numBones);
 }
 
 JNIEXPORT void JNICALL

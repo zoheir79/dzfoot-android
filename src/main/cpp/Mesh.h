@@ -20,7 +20,7 @@ class Mesh {
 public:
     void loadCube(float size);
     void loadSphere(float radius, int stacks, int slices);
-    void upload(const std::vector<Vertex>& verts, const std::vector<uint16_t>& indices);
+    void upload(const std::vector<Vertex>& verts, const std::vector<uint32_t>& indices);
     void draw() const;
     void destroy();
     bool hasData() const { return vao_ != 0; }
@@ -34,7 +34,7 @@ private:
 
 class SkinnedMesh {
 public:
-    void upload(const std::vector<SkinnedVertex>& verts, const std::vector<uint16_t>& indices);
+    void upload(const std::vector<SkinnedVertex>& verts, const std::vector<uint32_t>& indices);
     void draw() const;
     void destroy();
     bool hasData() const { return vao_ != 0; }

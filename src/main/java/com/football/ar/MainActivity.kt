@@ -152,6 +152,36 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun createMatchAndConnect() {
         Thread {
             try {
+                // 1. Fetch list of teams from catalog (real DZ Foot teams)
+                var teamA: String? = null
+                var teamB: String? = null
+                try {
+                    val teamsUrl = java.net.URL("http://102.220.31.70:8005/teams")
+                    val teamsConn = teamsUrl.openConnection() as java.net.HttpURLConnection
+                    teamsConn.requestMethod = "GET"
+                    teamsConn.connectTimeout = 5000
+                    teamsConn.readTimeout = 5000
+                    teamsConn.instanceFollowRedirects = false
+                    if (teamsConn.responseCode == 200) {
+                        val teamsResp = teamsConn.inputStream.bufferedReader().use { it.readText() }
+                        val teamsArr = org.json.JSONArray(teamsResp)
+                        if (teamsArr.length() >= 2) {
+                            // Pick 2 random distinct teams
+                            val idxA = (0 until teamsArr.length()).random()
+                            var idxB = (0 until teamsArr.length()).random()
+                            while (idxB == idxA) idxB = (0 until teamsArr.length()).random()
+                            teamA = teamsArr.getJSONObject(idxA).getString("id")
+                            teamB = teamsArr.getJSONObject(idxB).getString("id")
+                            val nameA = teamsArr.getJSONObject(idxA).optString("name", "Team A")
+                            val nameB = teamsArr.getJSONObject(idxB).optString("name", "Team B")
+                            Log.i("MainActivity", "Picked teams: $nameA vs $nameB")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "Could not fetch DZ teams, using fallback: ${e.message}")
+                }
+
+                // 2. Create the match with selected teams (or null = generic fallback)
                 val url = java.net.URL("http://102.220.31.70:8002/internal/create-match")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
@@ -160,7 +190,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 conn.connectTimeout = 10000
                 conn.readTimeout = 10000
 
-                val body = "{\"player_a\":\"user1\",\"player_b\":\"bot\",\"duration\":300}"
+                val bodyBuilder = StringBuilder()
+                bodyBuilder.append("{\"player_a\":\"user1\",\"player_b\":\"bot\",\"duration\":300,\"mode\":\"vs_ai\"")
+                if (teamA != null) bodyBuilder.append(",\"team_a\":\"$teamA\"")
+                if (teamB != null) bodyBuilder.append(",\"team_b\":\"$teamB\"")
+                bodyBuilder.append("}")
+                val body = bodyBuilder.toString()
                 conn.outputStream.use { os ->
                     os.write(body.toByteArray(Charsets.UTF_8))
                 }
@@ -174,7 +209,14 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 val response = conn.inputStream.bufferedReader().use { it.readText() }
                 val json = org.json.JSONObject(response)
                 val roomId = json.getString("room_id")
-                val lkUrl = json.getString("livekit_url").replace("https://", "wss://")
+                // Robust LiveKit URL: support https://, http://, wss://, ws:// prefixes
+                val rawLkUrl = json.getString("livekit_url")
+                val lkUrl = when {
+                    rawLkUrl.startsWith("wss://") || rawLkUrl.startsWith("ws://") -> rawLkUrl
+                    rawLkUrl.startsWith("https://") -> rawLkUrl.replace("https://", "wss://")
+                    rawLkUrl.startsWith("http://") -> rawLkUrl.replace("http://", "ws://")
+                    else -> "wss://$rawLkUrl"
+                }
                 val token = json.getString("token")
 
                 runOnUiThread {

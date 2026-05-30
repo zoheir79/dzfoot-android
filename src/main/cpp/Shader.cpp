@@ -64,5 +64,9 @@ void Shader::setVec3(GLuint program, const char* name, float x, float y, float z
     glUniform3f(glGetUniformLocation(program, name), x, y, z);
 }
 
-void Shader::destroy(GLuint program) { glDeleteProgram(program); }
+void Shader::destroy(GLuint program) {
+    if (program > 0) {
+        glDeleteProgram(program);
+    }
+}
  

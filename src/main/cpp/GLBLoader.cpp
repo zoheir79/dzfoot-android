@@ -232,6 +232,25 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                 if (mesh) node.meshIndex = jsonParseInt(mesh);
                 const char* skin = jsonFindKey(nodeArr, endObj - nodeArr, "skin");
                 if (skin) node.skinIndex = jsonParseInt(skin);
+                const char* childrenKey = jsonFindKey(nodeArr, endObj - nodeArr, "children");
+                if (childrenKey) {
+                    childrenKey = strchr(childrenKey, '[');
+                    if (childrenKey) {
+                        childrenKey++;
+                        while (*childrenKey && *childrenKey != ']') {
+                            while (*childrenKey && (*childrenKey < '0' || *childrenKey > '9') && *childrenKey != '-' && *childrenKey != ']') {
+                                childrenKey++;
+                            }
+                            if (*childrenKey == ']') break;
+                            int childIdx = jsonParseInt(childrenKey, &childrenKey);
+                            node.childrenIndices.push_back(childIdx);
+                            while (*childrenKey && *childrenKey != ',' && *childrenKey != ']') {
+                                childrenKey++;
+                            }
+                            if (*childrenKey == ',') childrenKey++;
+                        }
+                    }
+                }
                 const char* mat = jsonFindKey(nodeArr, endObj - nodeArr, "matrix");
                 if (mat) {
                     mat = strchr(mat, '[');
@@ -245,6 +264,14 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                 }
                 outScene.nodes.push_back(node);
                 nodeArr = endObj;
+            }
+            // Resolve parentIndex for all nodes based on children indices
+            for (size_t i = 0; i < outScene.nodes.size(); ++i) {
+                for (int32_t childIdx : outScene.nodes[i].childrenIndices) {
+                    if (childIdx >= 0 && childIdx < (int32_t)outScene.nodes.size()) {
+                        outScene.nodes[childIdx].parentIndex = static_cast<int32_t>(i);
+                    }
+                }
             }
         }
     }

@@ -14,6 +14,7 @@ struct GLBNode {
     int32_t parentIndex = -1;
     int32_t skinIndex = -1;
     int32_t meshIndex = -1;
+    std::vector<int32_t> childrenIndices;
 };
 
 struct GLBSkin {
@@ -24,7 +25,7 @@ struct GLBSkin {
 
 struct GLBPrimitive {
     std::vector<SkinnedVertex> vertices;
-    std::vector<uint16_t> indices;
+    std::vector<uint32_t> indices;
     std::string materialName;
 };
 
