@@ -924,10 +924,10 @@ static float clampFloat(float v, float lo, float hi) {
 }
 
 static uint8_t sanitizePlayerAnim(uint8_t animId, float speed) {
+    if (animId < dzfoot::ANIM_COUNT) return animId; // trust server / GameBridge
     uint8_t locomotionAnim = dzfoot::ANIM_IDLE;
     if (speed > 0.008f) locomotionAnim = dzfoot::ANIM_RUN;
     else if (speed > 0.0005f) locomotionAnim = dzfoot::ANIM_WALK;
-    if (animId < dzfoot::ANIM_COUNT) return animId;
     return locomotionAnim;
 }
 
@@ -1290,9 +1290,6 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         uint8_t desiredAnim = rawAnim;
         float speed = std::sqrt(vx * vx + vz * vz);
         desiredAnim = sanitizePlayerAnim(desiredAnim, speed);
-        if (desiredAnim == 0 && speed > 0.0005f) {
-            desiredAnim = speed > 0.008f ? 2 : 1;
-        }
         if (playerAnims_[i].current != desiredAnim) {
             playerAnims_[i].play(desiredAnim);
         }
@@ -1306,7 +1303,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
             LOGI("[renderPlayers] P%d pos=(%.2f,%.2f,%.2f) rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f(%.1fdeg) Yoff=%.2f",
                  i, gx, gw, gh,
                  rawAnim, playerAnims_[i].current, playerAnims_[i].blend,
-                 playerAnims_[i].time, vx, vz, rotY, rotY * 57.2958f, playerWorld[1]);
+                 playerAnims_[i].time, vx, vz, rotY, rotY * 57.2958f, worldPos[1]);
         }
 
         playerRig_.draw(viewProj, worldPos, rotY,
