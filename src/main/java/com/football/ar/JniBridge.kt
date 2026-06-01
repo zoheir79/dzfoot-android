@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import java.io.ByteArrayOutputStream
 
 class JniBridge {
@@ -39,7 +40,9 @@ class JniBridge {
 
     companion object {
         init {
+            Log.i("JniBridge", "Loading native library football_ar ...")
             System.loadLibrary("football_ar")
+            Log.i("JniBridge", "Native library football_ar loaded OK")
         }
 
         // VERY explicit static method

@@ -37,7 +37,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onCreate(saved)
 
         // Initialize JNI and AssetManager immediately before GLSurfaceView starts rendering
-        jni.nativeInit(this, assets, isEmulator())
+        Log.i("MainActivity", "About to call nativeInit ...")
+        val initOk = jni.nativeInit(this, assets, isEmulator())
+        Log.i("MainActivity", "nativeInit returned: $initOk")
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)

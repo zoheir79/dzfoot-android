@@ -415,12 +415,16 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         float dur = clip.duration > 0.0001f ? clip.duration : 1.0f;
         float phaseOffset = 0.0f;
         if (isLoopingAnim(animId) && playerIndex >= 0) {
-            phaseOffset = static_cast<float>((playerIndex * 37) % 100) * 0.01f * dur;
+            // large prime spread so offsets are visibly different even for few players
+            phaseOffset = static_cast<float>((playerIndex * 53) % 100) * 0.01f * dur;
         }
         float sampleTime = time + phaseOffset;
-        float tt = isLoopingAnim(animId)
-            ? sampleTime - std::floor(sampleTime / dur) * dur
-            : (sampleTime > dur ? dur : sampleTime);
+        float tt;
+        if (isLoopingAnim(animId)) {
+            tt = std::fmod(std::fmod(sampleTime, dur) + dur, dur); // wrap safely
+        } else {
+            tt = sampleTime > dur ? dur : sampleTime;
+        }
 
         if (animDbg) {
             size_t s0in = clip.samplers.empty() ? 0 : clip.samplers[0].input.size();
@@ -461,11 +465,14 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         float prevDur = prevClip.duration > 0.0001f ? prevClip.duration : 1.0f;
         float prevSampleTime = prevTime;
         if (isLoopingAnim(previousAnim) && playerIndex >= 0) {
-            prevSampleTime += static_cast<float>((playerIndex * 37) % 100) * 0.01f * prevDur;
+            prevSampleTime += static_cast<float>((playerIndex * 53) % 100) * 0.01f * prevDur;
         }
-        float prevTt = isLoopingAnim(previousAnim)
-            ? prevSampleTime - std::floor(prevSampleTime / prevDur) * prevDur
-            : (prevSampleTime > prevDur ? prevDur : prevSampleTime);
+        float prevTt;
+        if (isLoopingAnim(previousAnim)) {
+            prevTt = std::fmod(std::fmod(prevSampleTime, prevDur) + prevDur, prevDur);
+        } else {
+            prevTt = prevSampleTime > prevDur ? prevDur : prevSampleTime;
+        }
 
         for (const auto& ch : prevClip.channels) {
             if (ch.targetNode < 0 || ch.targetNode >= (int)N) continue;
@@ -521,12 +528,13 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
     float modelRot[16];
-    const float modelForwardOffset = 3.14159265f;
-    const float modelYaw = -rotY + modelForwardOffset;
+    // rotY from server is standard angle (CCW from +Z). model_base faces +Z.
+    const float modelForwardOffset = 0.0f;
+    const float modelYaw = rotY + modelForwardOffset;
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.18f;
+    const float scaleVal = 0.25f;
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -1271,8 +1279,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
 
         // Heading: prefer the server-computed rotY (derived from the player's
-        // internal direction). Fall back to velocity-derived heading (x,z) only
-        // if rotY is unavailable.
+        // internal direction). Fall back to velocity-derived heading (length,width)
+        // only if rotY is unavailable.
         float vx = playerVels ? playerVels[i * 3 + 0] : 0.0f;
         float vz = playerVels ? playerVels[i * 3 + 1] : 1.0f;
         float rotY = playerRotY ? playerRotY[i] : std::atan2(vx, vz);
@@ -1295,10 +1303,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         float teamColor[3] = { teamA ? 0.05f : 0.80f, teamA ? 0.15f : 0.05f, teamA ? 0.70f : 0.05f };
 
         if (shouldLog && (i == 0 || i == 1 || i == 5 || i == 10 || i == 11 || i == 16 || i == 21)) {
-            LOGI("[renderPlayers] P%d pos=(%.2f,%.2f,%.2f) rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f",
+            LOGI("[renderPlayers] P%d pos=(%.2f,%.2f,%.2f) rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f(%.1fdeg) Yoff=%.2f",
                  i, gx, gw, gh,
                  rawAnim, playerAnims_[i].current, playerAnims_[i].blend,
-                 playerAnims_[i].time, vx, vz, rotY);
+                 playerAnims_[i].time, vx, vz, rotY, rotY * 57.2958f, playerWorld[1]);
         }
 
         playerRig_.draw(viewProj, worldPos, rotY,

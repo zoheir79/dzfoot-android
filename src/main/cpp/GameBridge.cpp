@@ -8,31 +8,33 @@
 GameBridge::GameBridge() {
     std::memset(&state_, 0, sizeof(state_));
     std::memset(&tacticalState_, 0, sizeof(tacticalState_));
-    // Formation 4-3-3 Team A (left side, blue)
+    // Formation 4-3-3 Team A (left side, blue) — Y clamped to ±0.35 (inside touchlines)
     float teamA[11][3] = {
-        {-1.0f,  0.00f, 0.0f},
-        {-0.7f,  0.75f, 0.0f}, {-1.0f,  0.25f, 0.0f}, {-1.0f, -0.25f, 0.0f}, {-0.7f, -0.75f, 0.0f},
-        { 0.0f,  0.50f, 0.0f}, {-0.2f,  0.00f, 0.0f}, { 0.0f, -0.50f, 0.0f},
-        { 0.6f,  0.75f, 0.0f}, { 1.0f,  0.00f, 0.0f}, { 0.6f, -0.75f, 0.0f}
+        {-0.85f,  0.00f, 0.0f}, // GK
+        {-0.70f,  0.30f, 0.0f}, {-0.75f,  0.10f, 0.0f}, {-0.75f, -0.10f, 0.0f}, {-0.70f, -0.30f, 0.0f}, // DEF
+        {-0.30f,  0.20f, 0.0f}, {-0.40f,  0.00f, 0.0f}, {-0.30f, -0.20f, 0.0f}, // MID
+        { 0.50f,  0.25f, 0.0f}, { 0.60f,  0.00f, 0.0f}, { 0.50f, -0.25f, 0.0f}  // FWD
     };
-    // Formation 4-3-3 Team B (right side, red)
+    // Formation 4-3-3 Team B (right side, red) — mirrored, Y clamped to ±0.35
     float teamB[11][3] = {
-        { 1.0f,  0.00f, 0.0f},
-        { 0.7f, -0.75f, 0.0f}, { 1.0f, -0.25f, 0.0f}, { 1.0f,  0.25f, 0.0f}, { 0.7f,  0.75f, 0.0f},
-        { 0.0f, -0.50f, 0.0f}, { 0.2f,  0.00f, 0.0f}, { 0.0f,  0.50f, 0.0f},
-        {-0.6f, -0.75f, 0.0f}, {-1.0f,  0.00f, 0.0f}, {-0.6f,  0.75f, 0.0f}
+        { 0.85f,  0.00f, 0.0f}, // GK
+        { 0.70f, -0.30f, 0.0f}, { 0.75f, -0.10f, 0.0f}, { 0.75f,  0.10f, 0.0f}, { 0.70f,  0.30f, 0.0f}, // DEF
+        { 0.30f, -0.20f, 0.0f}, { 0.40f,  0.00f, 0.0f}, { 0.30f,  0.20f, 0.0f}, // MID
+        {-0.50f, -0.25f, 0.0f}, {-0.60f,  0.00f, 0.0f}, {-0.50f,  0.25f, 0.0f}  // FWD
     };
     for (int i = 0; i < 11; ++i) {
         state_.players[i].pos[0] = teamA[i][0];
         state_.players[i].pos[1] = teamA[i][1];
         state_.players[i].pos[2] = teamA[i][2];
         state_.players[i].team = 0;
+        state_.players[i].rotY = 1.57079633f; // face +X (attack right)
     }
     for (int i = 0; i < 11; ++i) {
         state_.players[i+11].pos[0] = teamB[i][0];
         state_.players[i+11].pos[1] = teamB[i][1];
         state_.players[i+11].pos[2] = teamB[i][2];
         state_.players[i+11].team = 1;
+        state_.players[i+11].rotY = -1.57079633f; // face -X (attack left)
     }
     state_.ball.pos[0] = 0; state_.ball.pos[1] = 0; state_.ball.pos[2] = 0.25f;
 }

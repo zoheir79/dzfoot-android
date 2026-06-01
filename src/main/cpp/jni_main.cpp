@@ -18,6 +18,8 @@
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_NATIVE_FIX_POS_ROT_ANIM_2026_06_01_1437";
+
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
 
@@ -36,11 +38,13 @@ extern "C" {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     gJavaVM = vm;
+    LOGI("%s JNI_OnLoad", NATIVE_BUILD_MARKER);
     return JNI_VERSION_1_6;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject context, jobject assetManager, jboolean isEmulator) {
+    LOGI("%s nativeInit", NATIVE_BUILD_MARKER);
     gAssetManager = AAssetManager_fromJava(env, assetManager);
     if (gActivityObj) {
         env->DeleteGlobalRef(gActivityObj);
@@ -93,7 +97,7 @@ Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     }
     gRenderer.init();
     gRendererInited = true;
-    LOGI("Renderer init OK (GL context ready)");
+    LOGI("%s Renderer init OK (GL context ready)", NATIVE_BUILD_MARKER);
 }
 
 JNIEXPORT void JNICALL
