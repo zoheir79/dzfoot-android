@@ -8,19 +8,19 @@
 GameBridge::GameBridge() {
     std::memset(&state_, 0, sizeof(state_));
     std::memset(&tacticalState_, 0, sizeof(tacticalState_));
-    // Formation 4-4-2 Team A (left side, blue)
+    // Formation 4-3-3 Team A (left side, blue)
     float teamA[11][3] = {
-        {-5.5f, 0, 0},       // GK
-        {-4.0f, 0, -2.0f}, {-4.0f, 0, -0.7f}, {-4.0f, 0, 0.7f}, {-4.0f, 0, 2.0f},  // DEF
-        {-2.0f, 0, -2.0f}, {-2.0f, 0, -0.7f}, {-2.0f, 0, 0.7f}, {-2.0f, 0, 2.0f},  // MID
-        {-0.5f, 0, -1.0f}, {-0.5f, 0, 1.0f}                                            // FWD
+        {-1.0f,  0.00f, 0.0f},
+        {-0.7f,  0.75f, 0.0f}, {-1.0f,  0.25f, 0.0f}, {-1.0f, -0.25f, 0.0f}, {-0.7f, -0.75f, 0.0f},
+        { 0.0f,  0.50f, 0.0f}, {-0.2f,  0.00f, 0.0f}, { 0.0f, -0.50f, 0.0f},
+        { 0.6f,  0.75f, 0.0f}, { 1.0f,  0.00f, 0.0f}, { 0.6f, -0.75f, 0.0f}
     };
-    // Formation 4-4-2 Team B (right side, red)
+    // Formation 4-3-3 Team B (right side, red)
     float teamB[11][3] = {
-        {5.5f, 0, 0},       // GK
-        {4.0f, 0, -2.0f}, {4.0f, 0, -0.7f}, {4.0f, 0, 0.7f}, {4.0f, 0, 2.0f},  // DEF
-        {2.0f, 0, -2.0f}, {2.0f, 0, -0.7f}, {2.0f, 0, 0.7f}, {2.0f, 0, 2.0f},  // MID
-        {0.5f, 0, -1.0f}, {0.5f, 0, 1.0f}                                            // FWD
+        { 1.0f,  0.00f, 0.0f},
+        { 0.7f, -0.75f, 0.0f}, { 1.0f, -0.25f, 0.0f}, { 1.0f,  0.25f, 0.0f}, { 0.7f,  0.75f, 0.0f},
+        { 0.0f, -0.50f, 0.0f}, { 0.2f,  0.00f, 0.0f}, { 0.0f,  0.50f, 0.0f},
+        {-0.6f, -0.75f, 0.0f}, {-1.0f,  0.00f, 0.0f}, {-0.6f,  0.75f, 0.0f}
     };
     for (int i = 0; i < 11; ++i) {
         state_.players[i].pos[0] = teamA[i][0];

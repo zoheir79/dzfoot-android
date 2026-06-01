@@ -159,38 +159,14 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         } else {
             gs.players[0].anim = dzfoot::ANIM_IDLE;
         }
-        if (gs.players[0].pos[0] < -5.0f) gs.players[0].pos[0] = -5.0f;
-        if (gs.players[0].pos[0] > 5.0f) gs.players[0].pos[0] = 5.0f;
-        if (gs.players[0].pos[1] < -2.0f) gs.players[0].pos[1] = -2.0f;
-        if (gs.players[0].pos[1] > 2.0f) gs.players[0].pos[1] = 2.0f;
+        if (gs.players[0].pos[0] < -1.0f) gs.players[0].pos[0] = -1.0f;
+        if (gs.players[0].pos[0] > 1.0f) gs.players[0].pos[0] = 1.0f;
+        if (gs.players[0].pos[1] < -1.0f) gs.players[0].pos[1] = -1.0f;
+        if (gs.players[0].pos[1] > 1.0f) gs.players[0].pos[1] = 1.0f;
         gs.ball.pos[0] = gs.players[0].pos[0] + 0.15f;
         gs.ball.pos[1] = gs.players[0].pos[1];
         gs.ball.pos[2] = 0.25f;
     }
-
-    // Update animation state (speed-adaptive cycle to avoid sliding)
-    float vx = gs.players[0].vel[0];
-    float vz = gs.players[0].vel[1];
-    float speedVal = std::sqrt(vx*vx + vz*vz);
-    
-    // Scale animation play rate dynamically based on current speed relative to a base
-    float animSpeedScale = 1.0f;
-    uint8_t desiredAnim = 0;
-    if (speedVal < 0.1f) {
-        desiredAnim = 0; // idle
-        animSpeedScale = 1.0f;
-    } else if (speedVal < 2.0f) {
-        desiredAnim = 1; // walk
-        animSpeedScale = speedVal / 1.0f; // normalize walk speed
-    } else {
-        desiredAnim = 2; // run
-        animSpeedScale = speedVal / 4.0f; // normalize run speed
-    }
-    if (animSpeedScale < 0.2f) animSpeedScale = 0.2f;
-    if (animSpeedScale > 2.0f) animSpeedScale = 2.0f;
-
-    gAnimPlayer.play(desiredAnim);
-    gAnimPlayer.update(0.016f * animSpeedScale);
 
     float positions[66]; // 22 players * 3
     uint8_t playerAnims[22];
@@ -198,15 +174,15 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     float playerRotY[22];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
-        positions[i * 3 + 1] = gs.players[i].pos[2];
-        positions[i * 3 + 2] = gs.players[i].pos[1];
+        positions[i * 3 + 1] = gs.players[i].pos[1];
+        positions[i * 3 + 2] = gs.players[i].pos[2];
         playerAnims[i] = gs.players[i].anim;
         playerVels[i * 3 + 0] = gs.players[i].vel[0];
-        playerVels[i * 3 + 1] = gs.players[i].vel[2];
-        playerVels[i * 3 + 2] = gs.players[i].vel[1];
+        playerVels[i * 3 + 1] = gs.players[i].vel[1];
+        playerVels[i * 3 + 2] = gs.players[i].vel[2];
         playerRotY[i] = gs.players[i].rotY;
     }
-    float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[2], gs.ball.pos[1] };
+    float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
     gRenderer.renderScene(gArManager, positions, 22, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY);
 }

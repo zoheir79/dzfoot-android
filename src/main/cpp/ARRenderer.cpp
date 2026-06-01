@@ -383,6 +383,8 @@ static void sampleSampler(const GLBAnimSampler& s, float t, float* out) {
     }
 }
 
+static bool isLoopingAnim(uint8_t animId);
+
 void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY,
                      uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
                      GLuint staticShader, GLuint skinnedShader, const float* teamColor,
@@ -411,7 +413,14 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         size_t clipIdx = (animId < animations.size()) ? animId : 0;
         const GLBAnimation& clip = animations[clipIdx];
         float dur = clip.duration > 0.0001f ? clip.duration : 1.0f;
-        float tt = time - std::floor(time / dur) * dur; // loop
+        float phaseOffset = 0.0f;
+        if (isLoopingAnim(animId) && playerIndex >= 0) {
+            phaseOffset = static_cast<float>((playerIndex * 37) % 100) * 0.01f * dur;
+        }
+        float sampleTime = time + phaseOffset;
+        float tt = isLoopingAnim(animId)
+            ? sampleTime - std::floor(sampleTime / dur) * dur
+            : (sampleTime > dur ? dur : sampleTime);
 
         if (animDbg) {
             size_t s0in = clip.samplers.empty() ? 0 : clip.samplers[0].input.size();
@@ -450,7 +459,13 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         size_t prevClipIdx = (previousAnim < animations.size()) ? previousAnim : 0;
         const GLBAnimation& prevClip = animations[prevClipIdx];
         float prevDur = prevClip.duration > 0.0001f ? prevClip.duration : 1.0f;
-        float prevTt = prevTime - std::floor(prevTime / prevDur) * prevDur;
+        float prevSampleTime = prevTime;
+        if (isLoopingAnim(previousAnim) && playerIndex >= 0) {
+            prevSampleTime += static_cast<float>((playerIndex * 37) % 100) * 0.01f * prevDur;
+        }
+        float prevTt = isLoopingAnim(previousAnim)
+            ? prevSampleTime - std::floor(prevSampleTime / prevDur) * prevDur
+            : (prevSampleTime > prevDur ? prevDur : prevSampleTime);
 
         for (const auto& ch : prevClip.channels) {
             if (ch.targetNode < 0 || ch.targetNode >= (int)N) continue;
@@ -506,8 +521,9 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
     float modelRot[16];
-    const float modelForwardOffset = 0.0f;
-    float qRot[4] = { 0.0f, std::sin((rotY + modelForwardOffset) * 0.5f), 0.0f, std::cos((rotY + modelForwardOffset) * 0.5f) };
+    const float modelForwardOffset = 3.14159265f;
+    const float modelYaw = -rotY + modelForwardOffset;
+    float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
     const float scaleVal = 0.18f;
@@ -895,12 +911,25 @@ static void mat4Scale(float* m, float x, float y, float z) {
     m[0] = x; m[5] = y; m[10] = z;
 }
 
+static float clampFloat(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 static uint8_t sanitizePlayerAnim(uint8_t animId, float speed) {
     uint8_t locomotionAnim = dzfoot::ANIM_IDLE;
     if (speed > 0.008f) locomotionAnim = dzfoot::ANIM_RUN;
     else if (speed > 0.0005f) locomotionAnim = dzfoot::ANIM_WALK;
-    if (animId <= dzfoot::ANIM_SPRINT) return animId;
+    if (animId < dzfoot::ANIM_COUNT) return animId;
     return locomotionAnim;
+}
+
+static bool isLoopingAnim(uint8_t animId) {
+    return animId == dzfoot::ANIM_IDLE ||
+           animId == dzfoot::ANIM_WALK ||
+           animId == dzfoot::ANIM_RUN ||
+           animId == dzfoot::ANIM_SPRINT ||
+           animId == dzfoot::ANIM_DRIBBLE ||
+           animId == dzfoot::ANIM_GK_IDLE;
 }
 
 // ─── ARRenderer implementation ───────────────────────────────────
@@ -1109,10 +1138,12 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         if (ballIdx >= 0 && ballPosition) {
             const float halfLen = pitchHalf_[0] * 0.1f;
             const float scaleX  = halfLen;
-            const float scaleZ  = halfLen * (83.6f / 54.4f);
-            scene_.nodes[ballIdx].local.position[0] = ballPosition[0] * scaleX;
+            const float scaleZ  = pitchHalf_[1] * 0.1f;
+            const float bx = clampFloat(ballPosition[0], -1.05f, 1.05f);
+            const float bw = clampFloat(ballPosition[1], -1.05f, 1.05f);
+            scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
             scene_.nodes[ballIdx].local.position[1] = ballPosition[2] * 0.1f + 0.08f; // height
-            scene_.nodes[ballIdx].local.position[2] = ballPosition[1] * scaleZ;       // width
+            scene_.nodes[ballIdx].local.position[2] = bw * scaleZ;                    // width
         }
         
         scene_.update();
@@ -1194,10 +1225,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
         const float halfLen = pitchHalf_[0] * 0.1f;
         const float scaleX  = halfLen;
-        const float scaleZ  = halfLen * (83.6f / 54.4f);
+        const float scaleZ  = pitchHalf_[1] * 0.1f;
         for (int i = 0; i < numPlayers; ++i) {
-            float gx = playerPositions[i * 3 + 0];
-            float gw = playerPositions[i * 3 + 1];
+            float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
+            float gw = clampFloat(playerPositions[i * 3 + 1], -1.05f, 1.05f);
             float gh = playerPositions[i * 3 + 2];
             float localModel[16] = {
                 0.15f, 0, 0, 0,
@@ -1231,11 +1262,11 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
 
     const float halfLen = pitchHalf_[0] * 0.1f;
     const float scaleX  = halfLen;
-    const float scaleZ  = halfLen * (83.6f / 54.4f);
+    const float scaleZ  = pitchHalf_[1] * 0.1f;
 
     for (int i = 0; i < numPlayers; ++i) {
-        float gx = playerPositions[i * 3 + 0];
-        float gw = playerPositions[i * 3 + 1];
+        float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
+        float gw = clampFloat(playerPositions[i * 3 + 1], -1.05f, 1.05f);
         float gh = playerPositions[i * 3 + 2];
         float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
 
@@ -1254,14 +1285,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         if (desiredAnim == 0 && speed > 0.0005f) {
             desiredAnim = speed > 0.008f ? 2 : 1;
         }
-        if (rawAnim != desiredAnim || playerAnims_[i].current >= dzfoot::ANIM_SHOOT_R ||
-            playerAnims_[i].previous >= dzfoot::ANIM_SHOOT_R) {
-            playerAnims_[i].current = desiredAnim;
-            playerAnims_[i].previous = desiredAnim;
-            playerAnims_[i].blend = 1.0f;
-            playerAnims_[i].time = 0.0f;
-            playerAnims_[i].prevTime = 0.0f;
-        } else if (playerAnims_[i].current != desiredAnim) {
+        if (playerAnims_[i].current != desiredAnim) {
             playerAnims_[i].play(desiredAnim);
         }
         playerAnims_[i].update(0.016f);
@@ -1270,9 +1294,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         // Realistic team kit colors: Team A = deep blue, Team B = deep red
         float teamColor[3] = { teamA ? 0.05f : 0.80f, teamA ? 0.15f : 0.05f, teamA ? 0.70f : 0.05f };
 
-        if (shouldLog && (i == 0 || i == 10)) {
-            LOGI("[renderPlayers] P%d rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f",
-                 i, rawAnim, playerAnims_[i].current, playerAnims_[i].blend,
+        if (shouldLog && (i == 0 || i == 1 || i == 5 || i == 10 || i == 11 || i == 16 || i == 21)) {
+            LOGI("[renderPlayers] P%d pos=(%.2f,%.2f,%.2f) rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f",
+                 i, gx, gw, gh,
+                 rawAnim, playerAnims_[i].current, playerAnims_[i].blend,
                  playerAnims_[i].time, vx, vz, rotY);
         }
 
