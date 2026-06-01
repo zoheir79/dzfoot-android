@@ -11,9 +11,11 @@ public:
     GameBridge();
     void applyGameState(const uint8_t* data, size_t len);
     void applyMatchEvent(const uint8_t* data, size_t len);
+    void applyTacticalState(const uint8_t* data, size_t len);
 
     // Raw server state (for prediction/reconciliation)
     const dzfoot::GameStatePacket& currentState() const { return state_; }
+    const dzfoot::TacticalStatePacket& tacticalState() const { return tacticalState_; }
 
     // Interpolated state for rendering (smooth 20 Hz)
     dzfoot::GameStatePacket getInterpolatedState();
@@ -32,6 +34,9 @@ public:
 
 private:
     dzfoot::GameStatePacket state_;
+    dzfoot::TacticalStatePacket tacticalState_;
+    uint32_t lastAppliedTick_ = 0;
+    uint32_t lastTacticalTick_ = 0;
     std::vector<dzfoot::MatchEventPacket> pendingEvents_;
     float arViewMatrix_[16];
     float arProjMatrix_[16];

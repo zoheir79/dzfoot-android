@@ -3,15 +3,116 @@
 #include "Mesh.h"
 #include "GLBLoader.h"
 #include "AssetLoader.h"
+#include "AnimationPlayer.h"
+#include "protocol/DZFootProtocol.h"
 #include <android/log.h>
+#include <jni.h>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 
 #define LOG_TAG "ARRenderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 extern AAssetManager* gAssetManager;
+extern JavaVM* gJavaVM;
+extern jobject gActivityObj;
+
+static GLuint uploadRgbaTexture(int width, int height, const uint8_t* pixels) {
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    return tex;
+}
+
+static GLuint loadAssetTexture(const char* path) {
+    if (!gJavaVM || !gActivityObj) return 0;
+    JNIEnv* env = nullptr;
+    bool detach = false;
+    jint status = gJavaVM->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (gJavaVM->AttachCurrentThread(&env, nullptr) != JNI_OK) return 0;
+        detach = true;
+    } else if (status != JNI_OK) {
+        return 0;
+    }
+
+    GLuint tex = 0;
+    jclass cls = env->FindClass("com/football/ar/JniBridge");
+    jmethodID method = cls ? env->GetStaticMethodID(cls, "decodeAssetRgba", "(Landroid/content/Context;Ljava/lang/String;)[B") : nullptr;
+    jstring jpath = env->NewStringUTF(path);
+    jbyteArray arr = method ? static_cast<jbyteArray>(env->CallStaticObjectMethod(cls, method, gActivityObj, jpath)) : nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        arr = nullptr;
+    }
+    if (arr) {
+        jsize len = env->GetArrayLength(arr);
+        if (len > 8) {
+            jbyte* data = env->GetByteArrayElements(arr, nullptr);
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(data);
+            int width = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
+            int height = bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
+            if (width > 0 && height > 0 && len >= 8 + width * height * 4) {
+                tex = uploadRgbaTexture(width, height, bytes + 8);
+                LOGI("Loaded texture %s (%dx%d)", path, width, height);
+            }
+            env->ReleaseByteArrayElements(arr, data, JNI_ABORT);
+        }
+        env->DeleteLocalRef(arr);
+    }
+    if (jpath) env->DeleteLocalRef(jpath);
+    if (cls) env->DeleteLocalRef(cls);
+    if (detach) gJavaVM->DetachCurrentThread();
+    return tex;
+}
+
+// Simple procedural texture generator for player materials
+static GLuint generateProceduralTexture(int type) {
+    const int W = 64, H = 64;
+    uint8_t pixels[W * H * 4];
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            int i = (y * W + x) * 4;
+            float nx = (float)x / W;
+            float ny = (float)y / H;
+            if (type == 0) { // skin
+                float noise = (float)(rand() % 8) - 4.0f;
+                pixels[i+0] = (uint8_t)fmax(0.0f, fmin(255.0f, 215.0f + noise));
+                pixels[i+1] = (uint8_t)fmax(0.0f, fmin(255.0f, 175.0f + noise));
+                pixels[i+2] = (uint8_t)fmax(0.0f, fmin(255.0f, 145.0f + noise));
+                pixels[i+3] = 255;
+            } else if (type == 1) { // kit
+                float fabric = ((x ^ y) & 3) * 2.0f;
+                uint8_t val = (uint8_t)(235.0f + fabric);
+                pixels[i+0] = val;
+                pixels[i+1] = val;
+                pixels[i+2] = val;
+                pixels[i+3] = 255;
+            } else if (type == 2) { // shoe
+                pixels[i+0] = 18;
+                pixels[i+1] = 18;
+                pixels[i+2] = 18;
+                pixels[i+3] = 255;
+            } else { // short
+                float fabric = ((x + y) & 3) * 2.0f;
+                uint8_t val = (uint8_t)(225.0f + fabric);
+                pixels[i+0] = val;
+                pixels[i+1] = val;
+                pixels[i+2] = val;
+                pixels[i+3] = 255;
+            }
+        }
+    }
+    return uploadRgbaTexture(W, H, pixels);
+}
 
 static bool loadStaticGLB(const char* filename, Mesh& outMesh, float* outHalfXZ = nullptr) {
     if (!gAssetManager) return false;
@@ -118,6 +219,384 @@ static bool loadSkinnedGLB(const char* filename, SkinnedMesh& outMesh) {
         return true;
     }
     return false;
+}
+
+bool PlayerRig::load(const char* filename) {
+    if (!gAssetManager) return false;
+    std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, filename);
+    if (bytes.empty()) {
+        LOGE("PlayerRig: Failed to read asset %s", filename);
+        return false;
+    }
+
+    GLBLoader loader;
+    GLBScene scene;
+    if (!loader.load(bytes.data(), bytes.size(), scene)) {
+        LOGE("PlayerRig: Failed to parse GLB %s", filename);
+        return false;
+    }
+
+    nodes.resize(scene.nodes.size());
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        const auto& gn = scene.nodes[i];
+        RigNode& rn = nodes[i];
+        rn.name = gn.name;
+        rn.parentIndex = gn.parentIndex;
+        std::memcpy(rn.localMatrix, gn.localMatrix, 16 * sizeof(float));
+        std::memcpy(rn.bindT, gn.bindT, 3 * sizeof(float));
+        std::memcpy(rn.bindR, gn.bindR, 4 * sizeof(float));
+        std::memcpy(rn.bindS, gn.bindS, 3 * sizeof(float));
+
+        extern AnimationPlayer gAnimPlayer;
+        rn.boneIndex = gAnimPlayer.findBoneIndex(rn.name);
+
+        if (gn.meshIndex >= 0 && gn.meshIndex < (int)scene.meshes.size()) {
+            const auto& mesh = scene.meshes[gn.meshIndex];
+
+            for (const auto& prim : mesh.primitives) {
+                if (!prim.vertices.empty()) {
+                    SkinnedMesh m;
+                    m.upload(prim.vertices, prim.indices);
+                    MeshPart mp;
+                    mp.mesh = std::move(m);
+                    mp.materialIndex = prim.materialIndex;
+                    mp.materialName = prim.materialName;
+                    if (prim.materialIndex >= 0 && prim.materialIndex < (int)scene.materials.size()) {
+                        std::memcpy(mp.baseColor, scene.materials[prim.materialIndex].baseColor, 4 * sizeof(float));
+                    }
+                    rn.staticMeshes.push_back(std::move(mp));
+                }
+            }
+        }
+    }
+    // Store skin data (if any) for bone matrix computation
+    if (!scene.skins.empty()) {
+        skin = scene.skins[0];
+        hasSkin = true;
+        LOGI("PlayerRig: skin loaded with %zu joints", skin.jointIndices.size());
+    }
+    // Store embedded animation clips (these match what the user verified in Three.js)
+    animations = std::move(scene.animations);
+    LOGI("PlayerRig: %zu embedded animations", animations.size());
+    for (size_t a = 0; a < animations.size(); ++a) {
+        LOGI("  Anim[%zu] '%s' dur=%.2fs channels=%zu samplers=%zu", a,
+             animations[a].name.c_str(), animations[a].duration,
+             animations[a].channels.size(), animations[a].samplers.size());
+    }
+    defaultSkinTex = loadAssetTexture("beta2/media/objects/players/textures/skin.jpg");
+    skinTex = defaultSkinTex ? defaultSkinTex : generateProceduralTexture(0);
+    kitTex = loadAssetTexture("beta2/media/objects/players/textures/kit_template.png");
+    if (!kitTex) kitTex = generateProceduralTexture(1);
+    shoeTex = loadAssetTexture("beta2/media/objects/players/textures/shoe.jpg");
+    if (!shoeTex) shoeTex = generateProceduralTexture(2);
+    shortTex = kitTex ? kitTex : generateProceduralTexture(3);
+
+    LOGI("PlayerRig: loaded '%s' with %zu nodes", filename, nodes.size());
+    // Only log the first 30 rig/mesh nodes; skip the 1100+ empty material/texture nodes
+    for (size_t i = 0; i < std::min(nodes.size(), size_t(30)); ++i) {
+        const auto& rn = nodes[i];
+        if (!rn.name.empty() || rn.staticMeshes.size() > 0) {
+            LOGI("  Node[%zu] name='%s' bone=%d meshes=%zu", i, rn.name.c_str(), rn.boneIndex, rn.staticMeshes.size());
+        }
+    }
+    return true;
+}
+
+void PlayerRig::destroy() {
+    for (auto& rn : nodes) {
+        for (auto& part : rn.staticMeshes) {
+            part.mesh.destroy();
+        }
+        rn.staticMeshes.clear();
+    }
+    nodes.clear();
+    skin = GLBSkin();
+    hasSkin = false;
+    if (skinTex)  { glDeleteTextures(1, &skinTex);  skinTex = 0; }
+    if (kitTex)   { glDeleteTextures(1, &kitTex);   kitTex = 0; }
+    if (shoeTex)  { glDeleteTextures(1, &shoeTex);  shoeTex = 0; }
+    if (shortTex && shortTex != kitTex) { glDeleteTextures(1, &shortTex); }
+    shortTex = 0;
+    defaultSkinTex = 0;
+}
+
+// Compose a column-major TRS matrix (matches GLBLoader convention)
+static void composeTRS(const float* t, const float* r, const float* s, float* m) {
+    float qx = r[0], qy = r[1], qz = r[2], qw = r[3];
+    float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+    float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+    float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+    m[0]  = (1 - 2*(yy+zz)) * s[0]; m[1]  = (2*(xy+wz)) * s[0]; m[2]  = (2*(xz-wy)) * s[0]; m[3]  = 0;
+    m[4]  = (2*(xy-wz)) * s[1]; m[5]  = (1 - 2*(xx+zz)) * s[1]; m[6]  = (2*(yz+wx)) * s[1]; m[7]  = 0;
+    m[8]  = (2*(xz+wy)) * s[2]; m[9]  = (2*(yz-wx)) * s[2]; m[10] = (1 - 2*(xx+yy)) * s[2]; m[11] = 0;
+    m[12] = t[0]; m[13] = t[1]; m[14] = t[2]; m[15] = 1;
+}
+
+static void quatSlerpLocal(const float* a, const float* b, float t, float* out) {
+    float dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+    float b0[4] = { b[0], b[1], b[2], b[3] };
+    if (dot < 0.0f) { dot = -dot; b0[0]=-b0[0]; b0[1]=-b0[1]; b0[2]=-b0[2]; b0[3]=-b0[3]; }
+    if (dot > 0.9995f) {
+        for (int i = 0; i < 4; ++i) out[i] = a[i] + t*(b0[i]-a[i]);
+    } else {
+        float theta0 = std::acos(dot);
+        float theta = theta0 * t;
+        float st = std::sin(theta), st0 = std::sin(theta0);
+        float s0 = std::cos(theta) - dot * st / st0;
+        float s1 = st / st0;
+        for (int i = 0; i < 4; ++i) out[i] = a[i]*s0 + b0[i]*s1;
+    }
+    float len = std::sqrt(out[0]*out[0]+out[1]*out[1]+out[2]*out[2]+out[3]*out[3]);
+    if (len > 1e-6f) { out[0]/=len; out[1]/=len; out[2]/=len; out[3]/=len; }
+}
+
+// Sample a glTF animation sampler at time t into out (comps floats)
+static void sampleSampler(const GLBAnimSampler& s, float t, float* out) {
+    int comps = s.components > 0 ? s.components : 4;
+    int stride = comps, valOff = 0;
+    if (s.interpolation == 2) { stride = comps * 3; valOff = comps; } // CUBICSPLINE: take value term
+    int n = (int)s.input.size();
+    if (n == 0 || (int)s.output.size() < stride) {
+        for (int i = 0; i < comps; ++i) out[i] = (comps == 4 && i == 3) ? 1.0f : 0.0f;
+        return;
+    }
+    if (t <= s.input.front()) {
+        for (int i = 0; i < comps; ++i) out[i] = s.output[valOff + i];
+        return;
+    }
+    if (t >= s.input.back()) {
+        int base = (n - 1) * stride + valOff;
+        for (int i = 0; i < comps; ++i) out[i] = s.output[base + i];
+        return;
+    }
+    int k = 0;
+    while (k + 1 < n && s.input[k + 1] < t) ++k;
+    float t0 = s.input[k], t1 = s.input[k + 1];
+    float alpha = (t1 > t0) ? (t - t0) / (t1 - t0) : 0.0f;
+    if (s.interpolation == 1) alpha = 0.0f; // STEP
+    const float* v0 = &s.output[k * stride + valOff];
+    const float* v1 = &s.output[(k + 1) * stride + valOff];
+    if (comps == 4) {
+        quatSlerpLocal(v0, v1, alpha, out);
+    } else {
+        for (int i = 0; i < comps; ++i) out[i] = v0[i] + (v1[i] - v0[i]) * alpha;
+    }
+}
+
+void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY,
+                     uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
+                     GLuint staticShader, GLuint skinnedShader, const float* teamColor,
+                     int playerIndex) {
+    if (nodes.empty()) return;
+
+    (void)skinnedShader;
+
+    // 1. Per-node animated TRS: start from bind pose, then override animated channels
+    const size_t N = nodes.size();
+    std::vector<float> nodeT(N * 3), nodeR(N * 4), nodeS(N * 3);
+    for (size_t i = 0; i < N; ++i) {
+        std::memcpy(&nodeT[i * 3], nodes[i].bindT, 3 * sizeof(float));
+        std::memcpy(&nodeR[i * 4], nodes[i].bindR, 4 * sizeof(float));
+        std::memcpy(&nodeS[i * 3], nodes[i].bindS, 3 * sizeof(float));
+    }
+
+    static int animDbgCounter = 0;
+    bool animDbg = (playerIndex == 0) && (animDbgCounter++ % 120 == 0);
+
+    std::vector<float> curT = nodeT, curR = nodeR, curS = nodeS;
+    std::vector<float> prevT = nodeT, prevR = nodeR, prevS = nodeS;
+
+    // Sample current animation
+    if (!animations.empty()) {
+        size_t clipIdx = (animId < animations.size()) ? animId : 0;
+        const GLBAnimation& clip = animations[clipIdx];
+        float dur = clip.duration > 0.0001f ? clip.duration : 1.0f;
+        float tt = time - std::floor(time / dur) * dur; // loop
+
+        if (animDbg) {
+            size_t s0in = clip.samplers.empty() ? 0 : clip.samplers[0].input.size();
+            size_t s0out = clip.samplers.empty() ? 0 : clip.samplers[0].output.size();
+            LOGI("[animDbg] anims=%zu clip=%zu '%s' dur=%.2f tt=%.2f chans=%zu samps=%zu s0in=%zu s0out=%zu",
+                 animations.size(), clipIdx, clip.name.c_str(), dur, tt,
+                 clip.channels.size(), clip.samplers.size(), s0in, s0out);
+        }
+
+        for (const auto& ch : clip.channels) {
+            if (ch.targetNode < 0 || ch.targetNode >= (int)N) continue;
+            if (ch.sampler < 0 || ch.sampler >= (int)clip.samplers.size()) continue;
+            const GLBAnimSampler& s = clip.samplers[ch.sampler];
+            float val[4] = { 0, 0, 0, 1 };
+            sampleSampler(s, tt, val);
+            if (ch.path == 0) {        // translation
+                if (ch.targetNode == 0) continue;
+                std::memcpy(&curT[ch.targetNode * 3], val, 3 * sizeof(float));
+            } else if (ch.path == 1) { // rotation
+                std::memcpy(&curR[ch.targetNode * 4], val, 4 * sizeof(float));
+                if (animDbg && ch.targetNode == 1) {
+                    LOGI("[animDbg] node1 body rot = (%.3f, %.3f, %.3f, %.3f)",
+                         val[0], val[1], val[2], val[3]);
+                }
+            } else if (ch.path == 2) { // scale
+                std::memcpy(&curS[ch.targetNode * 3], val, 3 * sizeof(float));
+            }
+        }
+    } else if (animDbg) {
+        LOGI("[animDbg] animations EMPTY (parse failed or not loaded)");
+    }
+
+    // Sample previous animation if we are blending (crossfade)
+    bool isBlending = (blend < 0.999f) && (!animations.empty());
+    if (isBlending) {
+        size_t prevClipIdx = (previousAnim < animations.size()) ? previousAnim : 0;
+        const GLBAnimation& prevClip = animations[prevClipIdx];
+        float prevDur = prevClip.duration > 0.0001f ? prevClip.duration : 1.0f;
+        float prevTt = prevTime - std::floor(prevTime / prevDur) * prevDur;
+
+        for (const auto& ch : prevClip.channels) {
+            if (ch.targetNode < 0 || ch.targetNode >= (int)N) continue;
+            if (ch.sampler < 0 || ch.sampler >= (int)prevClip.samplers.size()) continue;
+            const GLBAnimSampler& s = prevClip.samplers[ch.sampler];
+            float val[4] = { 0, 0, 0, 1 };
+            sampleSampler(s, prevTt, val);
+            if (ch.path == 0) {
+                if (ch.targetNode == 0) continue;
+                std::memcpy(&prevT[ch.targetNode * 3], val, 3 * sizeof(float));
+            } else if (ch.path == 1) {
+                std::memcpy(&prevR[ch.targetNode * 4], val, 4 * sizeof(float));
+            } else if (ch.path == 2) {
+                std::memcpy(&prevS[ch.targetNode * 3], val, 3 * sizeof(float));
+            }
+        }
+    }
+
+    // Blend current and previous TRS poses
+    for (size_t i = 0; i < N; ++i) {
+        if (isBlending) {
+            nodeT[i * 3 + 0] = prevT[i * 3 + 0] + blend * (curT[i * 3 + 0] - prevT[i * 3 + 0]);
+            nodeT[i * 3 + 1] = prevT[i * 3 + 1] + blend * (curT[i * 3 + 1] - prevT[i * 3 + 1]);
+            nodeT[i * 3 + 2] = prevT[i * 3 + 2] + blend * (curT[i * 3 + 2] - prevT[i * 3 + 2]);
+
+            quatSlerpLocal(&prevR[i * 4], &curR[i * 4], blend, &nodeR[i * 4]);
+
+            nodeS[i * 3 + 0] = prevS[i * 3 + 0] + blend * (curS[i * 3 + 0] - prevS[i * 3 + 0]);
+            nodeS[i * 3 + 1] = prevS[i * 3 + 1] + blend * (curS[i * 3 + 1] - prevS[i * 3 + 1]);
+            nodeS[i * 3 + 2] = prevS[i * 3 + 2] + blend * (curS[i * 3 + 2] - prevS[i * 3 + 2]);
+        } else {
+            std::memcpy(&nodeT[i * 3], &curT[i * 3], 3 * sizeof(float));
+            std::memcpy(&nodeR[i * 4], &curR[i * 4], 4 * sizeof(float));
+            std::memcpy(&nodeS[i * 3], &curS[i * 3], 3 * sizeof(float));
+        }
+    }
+
+    // 2. Compose local matrices from animated TRS and accumulate into global matrices
+    std::vector<float> globalMats(N * 16);
+    for (size_t i = 0; i < N; ++i) {
+        const auto& rn = nodes[i];
+        float localMat[16];
+        composeTRS(&nodeT[i * 3], &nodeR[i * 4], &nodeS[i * 3], localMat);
+
+        float* gm = &globalMats[i * 16];
+        if (rn.parentIndex >= 0) {
+            float* parentGm = &globalMats[rn.parentIndex * 16];
+            Transform::mat4Mul(parentGm, localMat, gm);
+        } else {
+            std::memcpy(gm, localMat, 16 * sizeof(float));
+        }
+    }
+
+    // 3. Build player world model matrix (Translation * rotY rotation * scale)
+    float modelRot[16];
+    const float modelForwardOffset = 0.0f;
+    float qRot[4] = { 0.0f, std::sin((rotY + modelForwardOffset) * 0.5f), 0.0f, std::cos((rotY + modelForwardOffset) * 0.5f) };
+    Transform::quatToMat4(qRot, modelRot);
+
+    const float scaleVal = 0.18f;
+    modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
+    modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
+    modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
+    modelRot[12] = playerWorld[0];
+    modelRot[13] = playerWorld[1];
+    modelRot[14] = playerWorld[2];
+    modelRot[15] = 1.0f;
+
+    // 4. player_base.glb is a segmented rigid model (no per-vertex weights).
+    // Draw each mesh part with its own animated global transform via the static shader.
+    GLuint shader = staticShader;
+    glUseProgram(shader);
+
+    // Cache uniform locations statically to avoid expensive glGetUniformLocation calls in the render loop
+    static GLint mvpLoc = -1;
+    static GLint colLoc = -1;
+    static GLint texLoc = -1;
+    static GLint useTexLoc = -1;
+    static GLuint lastShader = 0;
+
+    if (shader != lastShader) {
+        mvpLoc = glGetUniformLocation(shader, "u_ModelViewProj");
+        colLoc = glGetUniformLocation(shader, "u_Color");
+        texLoc = glGetUniformLocation(shader, "u_BaseTexture");
+        useTexLoc = glGetUniformLocation(shader, "u_UseTexture");
+        lastShader = shader;
+    }
+
+    // 5. Draw each limb with its own transform (segmented rigid-body animation)
+    int drawCount = 0;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const auto& rn = nodes[i];
+        if (rn.staticMeshes.empty()) continue;
+
+        float partWorld[16];
+        Transform::mat4Mul(modelRot, &globalMats[i * 16], partWorld);
+
+        if (animDbg && i == 1) {
+            LOGI("[draw] P%d node1 partWorld scaleX=%.2f trans=(%.2f,%.2f,%.2f)",
+                 playerIndex, partWorld[0], partWorld[12], partWorld[13], partWorld[14]);
+        }
+
+        float mvp[16];
+        Transform::mat4Mul(viewProj, partWorld, mvp);
+        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
+
+        for (const auto& part : rn.staticMeshes) {
+            float partColor[3];
+            partColor[0] = part.baseColor[0];
+            partColor[1] = part.baseColor[1];
+            partColor[2] = part.baseColor[2];
+
+            GLuint boundTex = 0;
+            if (part.materialName == "skin") {
+                boundTex = skinTex;
+            } else if (part.materialName == "kit_upper") {
+                boundTex = kitTex;
+                partColor[0] *= teamColor[0];
+                partColor[1] *= teamColor[1];
+                partColor[2] *= teamColor[2];
+            } else if (part.materialName == "kit_lower") {
+                boundTex = shortTex;
+                partColor[0] *= teamColor[0];
+                partColor[1] *= teamColor[1];
+                partColor[2] *= teamColor[2];
+            } else if (part.materialName == "shoe") {
+                boundTex = shoeTex;
+            }
+
+            if (boundTex && texLoc >= 0 && useTexLoc >= 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, boundTex);
+                glUniform1i(texLoc, 0);
+                glUniform1f(useTexLoc, 1.0f);
+            } else if (useTexLoc >= 0) {
+                glUniform1f(useTexLoc, 0.0f);
+            }
+
+            glUniform3fv(colLoc, 1, partColor);
+            part.mesh.draw();
+            drawCount++;
+        }
+    }
+    if (animDbg) {
+        LOGI("[draw] P%d total draw calls=%d", playerIndex, drawCount);
+    }
 }
 
 static void loadFallbackSkinnedPlayer(SkinnedMesh& outMesh) {
@@ -261,24 +740,28 @@ in vec2 v_TexCoord;
 in vec3 v_LocalPos;
 out vec4 outColor;
 uniform vec3 u_Color;
-uniform int u_MaterialType; // 0=default, 1=pitch, 2=goal, 3=ball
+uniform int u_MaterialType; // 0=default, 1=pitch, 2=goal, 3=ball, 4=stadium
+uniform sampler2D u_BaseTexture;
+uniform float u_UseTexture; // 0.0 = color only, 1.0 = texture * color
 uniform vec2 u_PitchHalf;   // pitch half-extents in local space (meters)
 
 vec3 grassPitch() {
-    vec3 baseGreen = vec3(0.20, 0.56, 0.16);
-    vec3 darkGreen = vec3(0.16, 0.46, 0.13);
-    vec3 white     = vec3(0.92, 0.94, 0.90);
+    vec3 baseGreen = vec3(0.18, 0.34, 0.13);
+    vec3 darkGreen = vec3(0.14, 0.28, 0.11);
+    vec3 white     = vec3(0.78, 0.76, 0.60);
 
     // Normalize local position into [-1, 1] across the pitch (robust to GLB units)
     vec2 n = v_LocalPos.xz / max(u_PitchHalf, vec2(0.001));
 
     // Mowing stripes: ~14 bands along the length, soft contrast
-    float stripe = step(0.5, fract(n.x * 7.0));
-    vec3 grass = mix(baseGreen, darkGreen, stripe);
+    float stripe = step(0.5, fract(n.x * 6.0));
+    vec3 grass = mix(baseGreen, darkGreen, stripe * 0.55);
+    float checker = step(0.5, fract(n.y * 5.0));
+    grass *= mix(0.96, 1.04, checker);
 
     // Line thickness in normalized units
-    float tx = 0.012;
-    float tz = 0.018;
+    float tx = 0.009;
+    float tz = 0.013;
 
     // Outer boundary (just inside the edge)
     float sideX = step(0.96, abs(n.x)) * step(abs(n.x), 0.99);
@@ -291,7 +774,7 @@ vec3 grassPitch() {
     float d = length(vec2(n.x, n.y * (u_PitchHalf.y / u_PitchHalf.x)));
     float circle = step(0.16, d) * step(d, 0.16 + tx);
     // Center spot
-    float spot = step(d, 0.025);
+    float spot = step(d, 0.018);
 
     // Penalty boxes (both ends): box spans |x| in [0.82,1.0], |z|<0.55
     float boxX = (step(0.82, abs(n.x)) * step(abs(n.x), 0.82 + tx)) * step(abs(n.y), 0.55);
@@ -308,25 +791,80 @@ vec3 ballPattern() {
     return mix(vec3(0.98, 0.98, 0.98), vec3(0.08, 0.08, 0.08), pattern);
 }
 
+vec3 stadiumShader() {
+    // Draw horizontal tiers of seats based on height (v_LocalPos.y)
+    float tier = step(0.5, fract(v_LocalPos.y * 1.5)); // 1.5 tiers per meter
+    vec3 seatColor = vec3(0.35, 0.38, 0.42); // Gray concrete stands
+
+    // Divide stands into alternating red and blue seat blocks around the stadium angle
+    float angle = atan(v_LocalPos.z, v_LocalPos.x);
+    float seatBlock = step(0.3, sin(angle * 24.0)); // 24 distinct sections
+    vec3 colorSeats = mix(vec3(0.80, 0.15, 0.15), vec3(0.15, 0.35, 0.80), step(0.0, sin(angle * 8.0)));
+
+    if (v_LocalPos.y > 1.2) {
+        return mix(seatColor, colorSeats * (0.8 + 0.2 * tier), step(0.4, fract(v_LocalPos.y * 1.5)) * seatBlock);
+    } else {
+        return vec3(0.22, 0.24, 0.26); // Asphalt pathways and surroundings
+    }
+}
+
+vec4 goalShader(vec3 lightColor) {
+    // Goal line is at abs(x) = 52.5. Anything behind 52.65 is the net.
+    float isNet = step(52.65, abs(v_LocalPos.x));
+
+    if (isNet > 0.5) {
+        // Net: draw a grid of square netting using UVs
+        vec2 grid = abs(sin(v_TexCoord * 140.0));
+        float netLine = step(0.92, max(grid.x, grid.y));
+        float alpha = mix(0.12, 0.90, netLine);
+        return vec4(vec3(0.95, 0.95, 0.95) * lightColor, alpha);
+    } else {
+        // Solid white posts and crossbars
+        return vec4(vec3(0.98, 0.98, 0.98) * lightColor, 1.0);
+    }
+}
+
 void main() {
     vec3 N = normalize(v_Normal);
     vec3 L1 = normalize(vec3(0.3, 1.0, 0.4));
     vec3 L2 = normalize(vec3(-0.5, 0.5, -0.3));
     float diff1 = max(dot(N, L1), 0.0);
     float diff2 = max(dot(N, L2), 0.0) * 0.3;
-    float amb = 0.45;
+    float amb = 0.55;
     float light = diff1 + diff2 + amb;
     
     vec3 baseColor;
+    float alpha = 1.0;
+
     if (u_MaterialType == 1) {
         baseColor = grassPitch();
+    } else if (u_MaterialType == 2) {
+        vec4 g = goalShader(vec3(light));
+        baseColor = g.rgb;
+        alpha = g.a;
+        outColor = vec4(baseColor, alpha);
+        return;
     } else if (u_MaterialType == 3) {
         baseColor = ballPattern();
+    } else if (u_MaterialType == 4) {
+        baseColor = stadiumShader();
+    } else if (u_UseTexture > 0.5) {
+        // Player texture: sample detail texture and tint with team color
+        vec3 texColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        baseColor = texColor * u_Color;
     } else {
         baseColor = u_Color;
     }
-    
-    outColor = vec4(baseColor * light, 1.0);
+
+    // Specular highlight for players to show 3D shape and limb definition
+    float spec = 0.0;
+    if (u_MaterialType == 0) {
+        vec3 viewDir = normalize(-v_LocalPos);
+        vec3 halfVec = normalize(L1 + viewDir);
+        spec = pow(max(dot(N, halfVec), 0.0), 32.0) * 0.5;
+    }
+
+    outColor = vec4(baseColor * light + vec3(spec), alpha);
 }
 )";
 
@@ -357,12 +895,23 @@ static void mat4Scale(float* m, float x, float y, float z) {
     m[0] = x; m[5] = y; m[10] = z;
 }
 
+static uint8_t sanitizePlayerAnim(uint8_t animId, float speed) {
+    uint8_t locomotionAnim = dzfoot::ANIM_IDLE;
+    if (speed > 0.008f) locomotionAnim = dzfoot::ANIM_RUN;
+    else if (speed > 0.0005f) locomotionAnim = dzfoot::ANIM_WALK;
+    if (animId <= dzfoot::ANIM_SPRINT) return animId;
+    return locomotionAnim;
+}
+
 // ─── ARRenderer implementation ───────────────────────────────────
 
 void ARRenderer::init() {
     cameraShader_ = Shader::compile(CAMERA_VERT, CAMERA_FRAG);
     skinnedShader_ = Shader::compile(SKINNED_VERT, SKINNED_FRAG);
     staticShader_ = Shader::compile(STATIC_VERT, STATIC_FRAG);
+    pitchTex_ = 0;
+    ballTex_ = loadAssetTexture("beta2/media/objects/balls/ball.jpg");
+    stadiumTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
 
     glGenBuffers(1, &quadVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
@@ -430,19 +979,22 @@ void ARRenderer::init() {
         scene_.nodes[ball].local.scale[2] = 0.3f;
     }
 
-    // 4. Stadium (Skipped to make loading instant on emulator/devices)
+    // 4. Stadium
     int stadium = scene_.addNode("stadium", root);
-    LOGI("Skipping stadium_test.glb load for performance");
-    scene_.nodes[stadium].visible = false;
-
-    // 5. Player Base skinned mesh
-    SkinnedMesh playerMesh;
-    if (loadSkinnedGLB("player_base.glb", playerMesh)) {
-        setPlayerMesh(playerMesh);
+    if (!loadStaticGLB("stadium_test.glb", scene_.nodes[stadium].staticMesh)) {
+        LOGE("Could not load stadium_test.glb, falling back to invisible");
+        scene_.nodes[stadium].visible = false;
     } else {
-        LOGE("Could not load player_base.glb, falling back to skinned cube");
-        loadFallbackSkinnedPlayer(playerMesh);
-        setPlayerMesh(playerMesh);
+        LOGI("Stadium loaded successfully from stadium_test.glb");
+        scene_.nodes[stadium].local.scale[0] = 0.1f;
+        scene_.nodes[stadium].local.scale[1] = 0.1f;
+        scene_.nodes[stadium].local.scale[2] = 0.1f;
+        scene_.nodes[stadium].visible = true;
+    }
+
+    // 5. Player Base rigid rig
+    if (!playerRig_.load("player_base.glb")) {
+        LOGE("Could not load player_base.glb rig!");
     }
 
     scene_.update();
@@ -452,12 +1004,20 @@ void ARRenderer::destroy() {
     Shader::destroy(cameraShader_);
     Shader::destroy(skinnedShader_);
     Shader::destroy(staticShader_);
-    if (quadVbo_) glDeleteBuffers(1, &quadVbo_);
-    if (uvVbo_) glDeleteBuffers(1, &uvVbo_);
+    cameraShader_ = 0;
+    skinnedShader_ = 0;
+    staticShader_ = 0;
+    if (quadVbo_) { glDeleteBuffers(1, &quadVbo_); quadVbo_ = 0; }
+    if (uvVbo_) { glDeleteBuffers(1, &uvVbo_); uvVbo_ = 0; }
+    if (pitchTex_) { glDeleteTextures(1, &pitchTex_); pitchTex_ = 0; }
+    if (ballTex_) { glDeleteTextures(1, &ballTex_); ballTex_ = 0; }
+    if (stadiumTex_) { glDeleteTextures(1, &stadiumTex_); stadiumTex_ = 0; }
+    playerRig_.destroy();
     for (auto& node : scene_.nodes) {
         node.skinnedMesh.destroy();
         node.staticMesh.destroy();
     }
+    scene_.nodes.clear();
 }
 
 void ARRenderer::setPlayerMesh(const SkinnedMesh& mesh) {
@@ -496,7 +1056,9 @@ void ARRenderer::drawCameraBackground(ARManager& ar) {
 
 void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int numPlayers,
                                const float* ballPosition,
-                               const float* boneMatrices, int numBones) {
+                               const float* boneMatrices, int numBones,
+                               const uint8_t* playerAnims, const float* playerVels,
+                               const float* playerRotY) {
     bool tracked = ar.isMarkerTracked();
     ARPose anchorPose = ar.getMarkerAnchorPose();
 
@@ -557,16 +1119,22 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     }
 
     renderStaticObjects(vpa);
-    renderPlayers(vpa, playerPositions, numPlayers, boneMatrices, numBones);
+    renderPlayers(vpa, playerPositions, numPlayers, playerAnims, playerVels, playerRotY);
 }
 
 void ARRenderer::renderStaticObjects(const float* viewProj) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     Shader::use(staticShader_);
     GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
     GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
     GLint matLoc = glGetUniformLocation(staticShader_, "u_MaterialType");
     GLint pitchHalfLoc = glGetUniformLocation(staticShader_, "u_PitchHalf");
+    GLint useTexLoc = glGetUniformLocation(staticShader_, "u_UseTexture");
+    GLint texLoc = glGetUniformLocation(staticShader_, "u_BaseTexture");
     glUniform2f(pitchHalfLoc, pitchHalf_[0], pitchHalf_[1]);
+    glUniform1f(useTexLoc, 0.0f);
 
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
@@ -577,6 +1145,7 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
 
         int materialType = 0;
+        GLuint boundTex = 0;
         if (node.name == "pitch") {
             glUniform3f(colLoc, 0.15f, 0.45f, 0.15f);
             materialType = 1; // procedural grass + lines
@@ -585,106 +1154,132 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
             materialType = 2;
         } else if (node.name == "ball") {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
-            materialType = 3; // procedural football pattern
+            materialType = ballTex_ ? 0 : 3; // procedural football pattern
+            boundTex = ballTex_;
+        } else if (node.name == "stadium") {
+            glUniform3f(colLoc, 0.35f, 0.37f, 0.40f);
+            materialType = stadiumTex_ ? 0 : 4; // procedural stadium
+            boundTex = stadiumTex_;
         } else {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
             materialType = 0;
         }
         glUniform1i(matLoc, materialType);
+        if (boundTex && texLoc >= 0 && useTexLoc >= 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, boundTex);
+            glUniform1i(texLoc, 0);
+            glUniform1f(useTexLoc, 1.0f);
+        } else if (useTexLoc >= 0) {
+            glUniform1f(useTexLoc, 0.0f);
+        }
 
         node.staticMesh.draw();
     }
+
+    glDisable(GL_BLEND);
 }
 
 void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
-                              const float* boneMatrices, int numBones) {
-    int baseIdx = scene_.findNode("playerBase");
-    
-    // Log player rendering info every 120 frames
-    static int playerFrameCounter = 0;
-    bool shouldLog = (playerFrameCounter++ % 120 == 0);
-    if (shouldLog) {
-        LOGI("[ARRenderer::renderPlayers] baseIdx: %d, hasMesh: %d, numPlayers: %d, numBones: %d",
-             baseIdx, (baseIdx >= 0) ? scene_.nodes[baseIdx].skinnedMesh.hasData() : 0, numPlayers, numBones);
-    }
+                               const uint8_t* playerAnims, const float* playerVels,
+                               const float* playerRotY) {
+    if (playerRig_.nodes.empty()) {
+        // fallback: draw tiny cubes if rig not loaded
+        static int fallbackCounter = 0;
+        bool shouldLog = (fallbackCounter++ % 120 == 0);
+        if (shouldLog) LOGI("[ARRenderer::renderPlayers] PlayerRig not loaded, using cube fallback");
 
-    if (baseIdx < 0 || !scene_.nodes[baseIdx].skinnedMesh.hasData()) return;
-
-    if (boneMatrices && numBones > 0) {
-        if (shouldLog) {
-            LOGI("[ARRenderer::renderPlayers] Using SKINNED pipeline with %d bones", numBones);
-        }
-        Shader::use(skinnedShader_);
-        GLint mvpLoc = glGetUniformLocation(skinnedShader_, "u_ModelViewProj");
-        GLint colLoc = glGetUniformLocation(skinnedShader_, "u_Color");
-        GLint boneLoc = glGetUniformLocation(skinnedShader_, "u_BoneMatrices");
-        glUniformMatrix4fv(boneLoc, numBones, GL_FALSE, boneMatrices);
-
-        // GF env-coord -> scene mapping (see GameplayFootball Position::env_coord)
-        //  gf[0] = length  in [-1,1]   -> scene X
-        //  gf[1] = width   in [-0.42,0.42] (meters = *83.6) -> scene Z (depth)
-        //  gf[2] = height  (meters = *1)   -> scene Y (up)
-        const float halfLen = pitchHalf_[0] * 0.1f;          // scene half-length
-        const float scaleX  = halfLen;                       // gf[0]=1 -> pitch end
-        const float scaleZ  = halfLen * (83.6f / 54.4f);     // width, proportional
-        const float modelScale = 0.4f;
-        for (int i = 0; i < numPlayers; ++i) {
-            float gx = playerPositions[i * 3 + 0];
-            float gw = playerPositions[i * 3 + 1];
-            float gh = playerPositions[i * 3 + 2];
-            float localModel[16] = {
-                modelScale, 0, 0, 0,
-                0, modelScale, 0, 0,
-                0, 0, modelScale, 0,
-                gx * scaleX,
-                gh * 0.1f + 0.2f,
-                gw * scaleZ,
-                1
-            };
-
-            float mvp[16];
-            mat4Mul(viewProj, localModel, mvp);
-            glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
-
-            bool teamA = (i < 11);
-            glUniform3f(colLoc, teamA ? 0.0f : 1.0f, teamA ? 0.5f : 0.0f, teamA ? 1.0f : 0.0f);
-            scene_.nodes[baseIdx].skinnedMesh.draw();
-        }
-    } else {
-        if (shouldLog) {
-            LOGI("[ARRenderer::renderPlayers] Using STATIC fallback pipeline");
-        }
-        // Fallback: Render players statically using staticShader_ (no bone matrices)
         Shader::use(staticShader_);
         GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
         GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-
         const float halfLen = pitchHalf_[0] * 0.1f;
         const float scaleX  = halfLen;
         const float scaleZ  = halfLen * (83.6f / 54.4f);
-        const float modelScale = 0.4f;
         for (int i = 0; i < numPlayers; ++i) {
             float gx = playerPositions[i * 3 + 0];
             float gw = playerPositions[i * 3 + 1];
             float gh = playerPositions[i * 3 + 2];
             float localModel[16] = {
-                modelScale, 0, 0, 0,
-                0, modelScale, 0, 0,
-                0, 0, modelScale, 0,
-                gx * scaleX,
-                gh * 0.1f + 0.2f,
-                gw * scaleZ,
-                1
+                0.15f, 0, 0, 0,
+                0, 0.15f, 0, 0,
+                0, 0, 0.15f, 0,
+                gx * scaleX, gh * 0.1f + 0.6f, gw * scaleZ, 1
             };
-
             float mvp[16];
             mat4Mul(viewProj, localModel, mvp);
             glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
-
             bool teamA = (i < 11);
             glUniform3f(colLoc, teamA ? 0.0f : 1.0f, teamA ? 0.5f : 0.0f, teamA ? 1.0f : 0.0f);
-            scene_.nodes[baseIdx].skinnedMesh.draw();
+            // no mesh to draw in fallback, just skip
         }
+        return;
+    }
+
+    Shader::use(staticShader_);
+    GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
+    GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
+    GLint matLoc = glGetUniformLocation(staticShader_, "u_MaterialType");
+    GLint useTexLoc = glGetUniformLocation(staticShader_, "u_UseTexture");
+    glUniform1i(matLoc, 0); // force default color mode so ballPattern is NOT used
+    glUniform1f(useTexLoc, 0.0f);
+
+    static int playerFrameCounter = 0;
+    bool shouldLog = (playerFrameCounter++ % 120 == 0);
+    if (shouldLog) {
+        LOGI("[renderPlayers] Rig nodes=%zu, numPlayers=%d", playerRig_.nodes.size(), numPlayers);
+    }
+
+    const float halfLen = pitchHalf_[0] * 0.1f;
+    const float scaleX  = halfLen;
+    const float scaleZ  = halfLen * (83.6f / 54.4f);
+
+    for (int i = 0; i < numPlayers; ++i) {
+        float gx = playerPositions[i * 3 + 0];
+        float gw = playerPositions[i * 3 + 1];
+        float gh = playerPositions[i * 3 + 2];
+        float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
+
+        // Heading: prefer the server-computed rotY (derived from the player's
+        // internal direction). Fall back to velocity-derived heading (x,z) only
+        // if rotY is unavailable.
+        float vx = playerVels ? playerVels[i * 3 + 0] : 0.0f;
+        float vz = playerVels ? playerVels[i * 3 + 1] : 1.0f;
+        float rotY = playerRotY ? playerRotY[i] : std::atan2(vx, vz);
+
+        // Animation state for this player
+        uint8_t rawAnim = playerAnims ? playerAnims[i] : 0;
+        uint8_t desiredAnim = rawAnim;
+        float speed = std::sqrt(vx * vx + vz * vz);
+        desiredAnim = sanitizePlayerAnim(desiredAnim, speed);
+        if (desiredAnim == 0 && speed > 0.0005f) {
+            desiredAnim = speed > 0.008f ? 2 : 1;
+        }
+        if (rawAnim != desiredAnim || playerAnims_[i].current >= dzfoot::ANIM_SHOOT_R ||
+            playerAnims_[i].previous >= dzfoot::ANIM_SHOOT_R) {
+            playerAnims_[i].current = desiredAnim;
+            playerAnims_[i].previous = desiredAnim;
+            playerAnims_[i].blend = 1.0f;
+            playerAnims_[i].time = 0.0f;
+            playerAnims_[i].prevTime = 0.0f;
+        } else if (playerAnims_[i].current != desiredAnim) {
+            playerAnims_[i].play(desiredAnim);
+        }
+        playerAnims_[i].update(0.016f);
+
+        bool teamA = (i < 11);
+        // Realistic team kit colors: Team A = deep blue, Team B = deep red
+        float teamColor[3] = { teamA ? 0.05f : 0.80f, teamA ? 0.15f : 0.05f, teamA ? 0.70f : 0.05f };
+
+        if (shouldLog && (i == 0 || i == 10)) {
+            LOGI("[renderPlayers] P%d rawAnim=%d anim=%d blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f",
+                 i, rawAnim, playerAnims_[i].current, playerAnims_[i].blend,
+                 playerAnims_[i].time, vx, vz, rotY);
+        }
+
+        playerRig_.draw(viewProj, worldPos, rotY,
+                        playerAnims_[i].current, playerAnims_[i].previous, playerAnims_[i].blend,
+                        playerAnims_[i].time, playerAnims_[i].prevTime,
+                        staticShader_, skinnedShader_, teamColor, i);
     }
 }
  

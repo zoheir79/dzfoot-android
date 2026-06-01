@@ -7,6 +7,7 @@
 
 GameBridge::GameBridge() {
     std::memset(&state_, 0, sizeof(state_));
+    std::memset(&tacticalState_, 0, sizeof(tacticalState_));
     // Formation 4-4-2 Team A (left side, blue)
     float teamA[11][3] = {
         {-5.5f, 0, 0},       // GK
@@ -33,7 +34,7 @@ GameBridge::GameBridge() {
         state_.players[i+11].pos[2] = teamB[i][2];
         state_.players[i+11].team = 1;
     }
-    state_.ball.pos[0] = 0; state_.ball.pos[1] = 0.25f; state_.ball.pos[2] = 0;
+    state_.ball.pos[0] = 0; state_.ball.pos[1] = 0; state_.ball.pos[2] = 0.25f;
 }
 
 void GameBridge::applyGameState(const uint8_t* data, size_t len) {
@@ -47,10 +48,14 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
         LOGE("Rejected GameState with NaN in player position");
         return;
     }
+    if (state_.tick <= lastAppliedTick_) {
+        return;
+    }
+    lastAppliedTick_ = state_.tick;
 
     // Feed anti-lag systems
     interpolator_.addState(state_);
-    float serverTimeMs = state_.tick * 50.0f; // 20 Hz
+    float serverTimeMs = state_.tick * (1000.0f / 60.0f);
     deadReckoning_.update(state_.ball, serverTimeMs);
 
     // Server reconciliation stub: acknowledge up to this tick
@@ -65,11 +70,6 @@ dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
     if (renderTime < 0.0f) renderTime = 0.0f;
     interpolator_.interpolate(renderTime, out);
 
-    // Blend dead-reckoned ball
-    dzfoot::NetworkBallState drBall;
-    deadReckoning_.tick(16.0f, drBall); // assume 16ms dt
-    // For now prefer interpolated ball; full blend can be added later
-    out.ball = drBall;
     return out;
 }
 
@@ -86,6 +86,20 @@ void GameBridge::applyMatchEvent(const uint8_t* data, size_t len) {
     dzfoot::MatchEventPacket ev;
     std::memcpy(&ev, data, sizeof(dzfoot::MatchEventPacket));
     pendingEvents_.push_back(ev);
+}
+
+void GameBridge::applyTacticalState(const uint8_t* data, size_t len) {
+    if (!dzfoot::validateTacticalStatePacket(data, len)) {
+        LOGE("Rejected invalid TacticalState packet (len=%zu)", len);
+        return;
+    }
+    dzfoot::TacticalStatePacket incoming;
+    std::memcpy(&incoming, data, sizeof(dzfoot::TacticalStatePacket));
+    if (incoming.tick <= lastTacticalTick_) {
+        return;
+    }
+    tacticalState_ = incoming;
+    lastTacticalTick_ = incoming.tick;
 }
 
 std::vector<dzfoot::MatchEventPacket> GameBridge::flushEvents() {
@@ -106,7 +120,7 @@ void GameBridge::setARCamera(const float* viewMatrix,
 // AnimationStateDetector -- deduce anim_id from GF state
 // In real integration this runs inside GameplayFootball server tick
 uint8_t deduceAnimId(const dzfoot::NetworkPlayerState& p, const dzfoot::NetworkBallState& ball) {
-    float speed = p.vel[0] * p.vel[0] + p.vel[2] * p.vel[2];
+    float speed = p.vel[0] * p.vel[0] + p.vel[1] * p.vel[1];
     if (speed < 0.01f) return dzfoot::ANIM_IDLE;
     if (speed < 0.16f) return dzfoot::ANIM_WALK;
     if (speed < 0.64f) return dzfoot::ANIM_RUN;

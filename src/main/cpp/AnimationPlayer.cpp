@@ -230,6 +230,8 @@ int AnimationPlayer::findBoneIndex(const std::string& name) const {
     for (int i = 0; i < 14; ++i) {
         if (name == boneNames[i]) return i;
     }
+    // GLB player_base.glb uses 'neck' for the top spine/head bone
+    if (name == "neck") return 13;
     return -1;
 }
 
@@ -243,30 +245,57 @@ void AnimationPlayer::evaluateClip(const AnimClip& clip, float t, float* outPos,
     for (const auto& tr : clip.tracks) {
         if (tr.boneName == boneName) { track = &tr; break; }
     }
+    // Alias for top spine bone (desktop exporter uses 'head', GLB uses 'neck')
+    if (!track) {
+        if (boneName == "head") {
+            for (const auto& tr : clip.tracks) {
+                if (tr.boneName == "neck") { track = &tr; break; }
+            }
+        } else if (boneName == "neck") {
+            for (const auto& tr : clip.tracks) {
+                if (tr.boneName == "head") { track = &tr; break; }
+            }
+        }
+    }
     if (!track || track->keyframes.empty()) return;
 
     if (t <= track->keyframes.front().time) {
         std::memcpy(outPos, track->keyframes.front().pos, 3*sizeof(float));
         std::memcpy(outRot, track->keyframes.front().rot, 4*sizeof(float));
-        return;
-    }
-    if (t >= track->keyframes.back().time) {
+    } else if (t >= track->keyframes.back().time) {
         std::memcpy(outPos, track->keyframes.back().pos, 3*sizeof(float));
         std::memcpy(outRot, track->keyframes.back().rot, 4*sizeof(float));
-        return;
-    }
-
-    for (size_t i = 1; i < track->keyframes.size(); ++i) {
-        if (t < track->keyframes[i].time) {
-            const auto& a = track->keyframes[i-1];
-            const auto& b = track->keyframes[i];
-            float range = b.time - a.time;
-            float alpha = (range > 0.0001f) ? (t - a.time) / range : 0.0f;
-            lerpVec3(a.pos, b.pos, alpha, outPos);
-            slerp(a.rot, b.rot, alpha, outRot);
-            return;
+    } else {
+        for (size_t i = 1; i < track->keyframes.size(); ++i) {
+            if (t < track->keyframes[i].time) {
+                const auto& a = track->keyframes[i-1];
+                const auto& b = track->keyframes[i];
+                float range = b.time - a.time;
+                float alpha = (range > 0.0001f) ? (t - a.time) / range : 0.0f;
+                lerpVec3(a.pos, b.pos, alpha, outPos);
+                slerp(a.rot, b.rot, alpha, outRot);
+                break;
+            }
         }
     }
+
+    // Convert position from Z-up to Y-up: (x, y, z) -> (x, z, -y)
+    float px = outPos[0];
+    float py = outPos[1];
+    float pz = outPos[2];
+    outPos[0] = px;
+    outPos[1] = pz;
+    outPos[2] = -py;
+
+    // Convert quaternion from Z-up to Y-up: (qx, qy, qz, qw) -> (qx, qz, -qy, qw)
+    float qx = outRot[0];
+    float qy = outRot[1];
+    float qz = outRot[2];
+    float qw = outRot[3];
+    outRot[0] = qx;
+    outRot[1] = qz;
+    outRot[2] = -qy;
+    outRot[3] = qw;
 }
 
 int AnimationPlayer::evaluateState(uint8_t current, uint8_t previous, float blend, float time, float prevTime,

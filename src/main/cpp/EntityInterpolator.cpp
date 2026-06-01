@@ -10,8 +10,7 @@ void EntityInterpolator::addState(const dzfoot::GameStatePacket& state) {
 }
 
 float EntityInterpolator::getTimeMs(const dzfoot::GameStatePacket& s) const {
-    // Use server tick as a proxy for time (20 Hz = 50ms per tick)
-    return s.tick * 50.0f;
+    return s.tick * (1000.0f / 60.0f);
 }
 
 float EntityInterpolator::latestReceivedTimeMs() const {

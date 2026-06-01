@@ -1,29 +1,49 @@
 #pragma once
 #include "ARManager.h"
 #include "Mesh.h"
+#include "GLBLoader.h"
 #include "SceneGraph.h"
 #include "Camera.h"
 #include <GLES3/gl3.h>
 #include <string>
 #include <vector>
 
+struct MeshPart {
+    SkinnedMesh mesh;
+    int materialIndex = -1;
+    std::string materialName;
+    float baseColor[4] = {1,1,1,1};
+};
+
 struct RigNode {
     std::string name;
     int32_t parentIndex = -1;
     int32_t boneIndex = -1; // 0..13 mapped from AnimationPlayer, or -1
     float localMatrix[16];
-    Mesh staticMesh;
-    bool hasMesh = false;
+    // Bind-pose TRS, used to recompose local transform when animation overrides a channel
+    float bindT[3] = {0.0f, 0.0f, 0.0f};
+    float bindR[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float bindS[3] = {1.0f, 1.0f, 1.0f};
+    std::vector<MeshPart> staticMeshes;
 };
 
 class PlayerRig {
 public:
     std::vector<RigNode> nodes;
+    std::vector<GLBAnimation> animations; // embedded GLB clips
+    GLBSkin skin;
+    bool hasSkin = false;
+    GLuint skinTex = 0;
+    GLuint kitTex = 0;
+    GLuint shoeTex = 0;
+    GLuint shortTex = 0;
+    GLuint defaultSkinTex = 0;
 
     bool load(const char* filename);
     void draw(const float* viewProj, const float* playerWorld, float rotY,
               uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
-              GLuint shader, GLint mvpLoc, GLint colLoc, const float* teamColor);
+              GLuint staticShader, GLuint skinnedShader, const float* teamColor,
+              int playerIndex = -1);
     void destroy();
 };
 
@@ -61,7 +81,8 @@ public:
     void renderScene(ARManager& ar, const float* playerPositions, int numPlayers,
                      const float* ballPosition,
                      const float* boneMatrices = nullptr, int numBones = 0,
-                     const uint8_t* playerAnims = nullptr, const float* playerVels = nullptr);
+                     const uint8_t* playerAnims = nullptr, const float* playerVels = nullptr,
+                     const float* playerRotY = nullptr);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
 
@@ -79,6 +100,9 @@ private:
     Camera camera_;
     PlayerRig playerRig_;
     PlayerAnimState playerAnims_[22];
+    GLuint pitchTex_ = 0;
+    GLuint ballTex_ = 0;
+    GLuint stadiumTex_ = 0;
 
     // Pitch GLB half-extents in local space (meters), used to normalize grass lines
     float pitchHalf_[2] = { 52.5f, 34.0f };
@@ -90,5 +114,6 @@ private:
 
     void renderStaticObjects(const float* viewProj);
     void renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
-                       const uint8_t* playerAnims, const float* playerVels);
+                       const uint8_t* playerAnims, const float* playerVels,
+                       const float* playerRotY);
 };

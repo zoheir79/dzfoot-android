@@ -61,7 +61,7 @@ static const char* jsonSkipObject(const char* p) {
     int depth = 0;
     while (*p) {
         if (*p == '{') depth++;
-        else if (*p == '}') { depth--; p++; if (depth == 0) return p; }
+        else if (*p == '}') { depth--; p++; if (depth == 0) return p; continue; }
         else if (*p == '"') { p++; while (*p && *p != '"') p++; }
         p++;
     }
@@ -72,7 +72,7 @@ static const char* jsonSkipArray(const char* p) {
     int depth = 0;
     while (*p) {
         if (*p == '[') depth++;
-        else if (*p == ']') { depth--; p++; if (depth == 0) return p; }
+        else if (*p == ']') { depth--; p++; if (depth == 0) return p; continue; }
         else if (*p == '"') { p++; while (*p && *p != '"') p++; }
         p++;
     }
@@ -175,9 +175,8 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                 if (cnt) a.count = jsonParseInt(cnt);
                 const char* type = jsonFindKey(accArr, endObj - accArr, "type");
                 if (type) {
-                    const char* ts = nullptr;
-                    jsonParseString(type, &ts);
-                    if (ts) a.typeComponents = typeToComponents(ts);
+                    const char* tstart = jsonParseString(type, nullptr);
+                    if (tstart) a.typeComponents = typeToComponents(tstart);
                 }
                 const char* bo = jsonFindKey(accArr, endObj - accArr, "byteOffset");
                 if (bo) a.byteOffset = jsonParseInt(bo);
@@ -225,8 +224,10 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                 const char* name = jsonFindKey(nodeArr, endObj - nodeArr, "name");
                 if (name) {
                     const char* ns = nullptr;
-                    jsonParseString(name, &ns);
-                    if (ns) node.name = std::string(name + 1, ns - (name + 1));
+                    const char* start = jsonParseString(name, &ns);
+                    if (start && ns) {
+                        node.name = std::string(start, ns - start);
+                    }
                 }
                 const char* mesh = jsonFindKey(nodeArr, endObj - nodeArr, "mesh");
                 if (mesh) node.meshIndex = jsonParseInt(mesh);
@@ -259,8 +260,75 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                         for (int i = 0; i < 16; ++i) node.localMatrix[i] = jsonParseFloat(mat, &mat);
                     }
                 } else {
-                    // identity
-                    for (int i = 0; i < 16; ++i) node.localMatrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+                    // glTF nodes commonly use separate TRS (translation/rotation/scale)
+                    // instead of a baked matrix. Compose localMatrix = T * R * S.
+                    float tx = 0, ty = 0, tz = 0;
+                    float qx = 0, qy = 0, qz = 0, qw = 1;
+                    float sx = 1, sy = 1, sz = 1;
+
+                    const char* tr = jsonFindKey(nodeArr, endObj - nodeArr, "translation");
+                    if (tr) {
+                        tr = strchr(tr, '[');
+                        if (tr) {
+                            tr++;
+                            tx = jsonParseFloat(tr, &tr);
+                            ty = jsonParseFloat(tr, &tr);
+                            tz = jsonParseFloat(tr, &tr);
+                        }
+                    }
+                    const char* rot = jsonFindKey(nodeArr, endObj - nodeArr, "rotation");
+                    if (rot) {
+                        rot = strchr(rot, '[');
+                        if (rot) {
+                            rot++;
+                            qx = jsonParseFloat(rot, &rot);
+                            qy = jsonParseFloat(rot, &rot);
+                            qz = jsonParseFloat(rot, &rot);
+                            qw = jsonParseFloat(rot, &rot);
+                        }
+                    }
+                    const char* scl = jsonFindKey(nodeArr, endObj - nodeArr, "scale");
+                    if (scl) {
+                        scl = strchr(scl, '[');
+                        if (scl) {
+                            scl++;
+                            sx = jsonParseFloat(scl, &scl);
+                            sy = jsonParseFloat(scl, &scl);
+                            sz = jsonParseFloat(scl, &scl);
+                        }
+                    }
+
+                    // Store decomposed bind TRS for animation channel overrides
+                    node.bindT[0] = tx; node.bindT[1] = ty; node.bindT[2] = tz;
+                    node.bindR[0] = qx; node.bindR[1] = qy; node.bindR[2] = qz; node.bindR[3] = qw;
+                    node.bindS[0] = sx; node.bindS[1] = sy; node.bindS[2] = sz;
+
+                    // Build rotation matrix from quaternion (column-major)
+                    float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+                    float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+                    float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+
+                    float* m = node.localMatrix;
+                    // Column 0
+                    m[0]  = (1 - 2*(yy+zz)) * sx;
+                    m[1]  = (2*(xy+wz))     * sx;
+                    m[2]  = (2*(xz-wy))     * sx;
+                    m[3]  = 0;
+                    // Column 1
+                    m[4]  = (2*(xy-wz))     * sy;
+                    m[5]  = (1 - 2*(xx+zz)) * sy;
+                    m[6]  = (2*(yz+wx))     * sy;
+                    m[7]  = 0;
+                    // Column 2
+                    m[8]  = (2*(xz+wy))     * sz;
+                    m[9]  = (2*(yz-wx))     * sz;
+                    m[10] = (1 - 2*(xx+yy)) * sz;
+                    m[11] = 0;
+                    // Column 3 (translation)
+                    m[12] = tx;
+                    m[13] = ty;
+                    m[14] = tz;
+                    m[15] = 1;
                 }
                 outScene.nodes.push_back(node);
                 nodeArr = endObj;
@@ -350,12 +418,13 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                 }
                 const char* primArr = jsonFindKey(meshArr, endMesh - meshArr, "primitives");
                 if (primArr) {
+                    const char* endPrimArr = jsonSkipArray(strchr(primArr, '['));
                     primArr = strchr(primArr, '[');
-                    if (primArr) {
+                    if (primArr && endPrimArr) {
                         primArr++;
-                        while (*primArr) {
-                            while (*primArr && *primArr != '{') primArr++;
-                            if (*primArr != '{') break;
+                        while (primArr < endPrimArr && *primArr) {
+                            while (primArr < endPrimArr && *primArr && *primArr != '{') primArr++;
+                            if (primArr >= endPrimArr || *primArr != '{') break;
                             GLBPrimitive prim{};
                             const char* endPrim = jsonSkipObject(primArr);
 
@@ -377,6 +446,8 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                             int idxAcc = -1;
                             const char* indices = jsonFindKey(primArr, endPrim - primArr, "indices");
                             if (indices) idxAcc = jsonParseInt(indices);
+                            const char* material = jsonFindKey(primArr, endPrim - primArr, "material");
+                            if (material) prim.materialIndex = jsonParseInt(material);
 
                             if (posAcc >= 0 && posAcc < (int)accessors.size()) {
                                 const GLTFAccessor& a = accessors[posAcc];
@@ -486,10 +557,178 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
         }
     }
 
+    // Parse materials
+    const char* matArr = jsonFindKey(jsonStr, jsonLen, "materials");
+    if (matArr) {
+        matArr = strchr(matArr, '[');
+        if (matArr) {
+            matArr++;
+            while (*matArr) {
+                while (*matArr && *matArr != '{') matArr++;
+                if (*matArr != '{') break;
+                GLBMaterial mat{};
+                const char* endObj = jsonSkipObject(matArr);
+                const char* name = jsonFindKey(matArr, endObj - matArr, "name");
+                if (name) {
+                    const char* ns = nullptr;
+                    const char* start = jsonParseString(name, &ns);
+                    if (start && ns) {
+                        mat.name = std::string(start, ns - start);
+                    }
+                }
+                const char* pbr = jsonFindKey(matArr, endObj - matArr, "pbrMetallicRoughness");
+                if (pbr) {
+                    const char* bcf = jsonFindKey(pbr, endObj - pbr, "baseColorFactor");
+                    if (bcf) {
+                        bcf = strchr(bcf, '[');
+                        if (bcf) {
+                            bcf++;
+                            for (int i = 0; i < 4; ++i) {
+                                mat.baseColor[i] = jsonParseFloat(bcf, &bcf);
+                            }
+                        }
+                    }
+                }
+                outScene.materials.push_back(mat);
+                matArr = endObj;
+            }
+        }
+    }
+
+    for (auto& mesh : outScene.meshes) {
+        for (auto& prim : mesh.primitives) {
+            if (prim.materialIndex >= 0 && prim.materialIndex < (int)outScene.materials.size()) {
+                prim.materialName = outScene.materials[prim.materialIndex].name;
+            }
+        }
+    }
+
+    // Helper to read an accessor's float data (used for animation samplers)
+    auto readAccessorFloats = [&](int accIdx, std::vector<float>& out, int& comps) {
+        out.clear();
+        comps = 0;
+        if (accIdx < 0 || accIdx >= (int)accessors.size()) return;
+        const GLTFAccessor& a = accessors[accIdx];
+        comps = a.typeComponents;
+        if (a.bufferView < 0 || a.bufferView >= (int)bufferViews.size()) return;
+        const GLTFBufferView& bv = bufferViews[a.bufferView];
+        const uint8_t* src = binData + bv.byteOffset + a.byteOffset;
+        int n = a.count * a.typeComponents;
+        out.resize(n);
+        // Animation sampler data is expected to be FLOAT (5126)
+        for (int i = 0; i < n; ++i) { out[i] = readFloatLE(src + i * 4); }
+    };
+
+    // Parse animations (embedded glTF clips)
+    const char* animArr = jsonFindKey(jsonStr, jsonLen, "animations");
+    if (animArr) {
+        animArr = strchr(animArr, '[');
+        if (animArr) {
+            animArr++;
+            while (*animArr) {
+                while (*animArr && *animArr != '{' && *animArr != ']') animArr++;
+                if (*animArr != '{') break;
+                GLBAnimation anim{};
+                const char* endAnim = jsonSkipObject(animArr);
+
+                const char* name = jsonFindKey(animArr, endAnim - animArr, "name");
+                if (name) {
+                    const char* ns = nullptr;
+                    const char* start = jsonParseString(name, &ns);
+                    if (start && ns) anim.name = std::string(start, ns - start);
+                }
+
+                // Parse samplers
+                const char* samp = jsonFindKey(animArr, endAnim - animArr, "samplers");
+                if (samp) {
+                    const char* sampStart = strchr(samp, '[');
+                    const char* sampEnd = sampStart ? jsonSkipArray(sampStart) : nullptr;
+                    if (sampStart && sampEnd) {
+                        const char* p = sampStart + 1;
+                        while (p < sampEnd && *p) {
+                            while (p < sampEnd && *p && *p != '{') p++;
+                            if (p >= sampEnd || *p != '{') break;
+                            const char* endObj = jsonSkipObject(p);
+                            GLBAnimSampler s{};
+                            int inputAcc = -1, outputAcc = -1;
+                            const char* in = jsonFindKey(p, endObj - p, "input");
+                            if (in) inputAcc = jsonParseInt(in);
+                            const char* out = jsonFindKey(p, endObj - p, "output");
+                            if (out) outputAcc = jsonParseInt(out);
+                            const char* interp = jsonFindKey(p, endObj - p, "interpolation");
+                            if (interp) {
+                                const char* is = nullptr;
+                                const char* istart = jsonParseString(interp, &is);
+                                if (istart && is) {
+                                    std::string iv(istart, is - istart);
+                                    if (iv == "STEP") s.interpolation = 1;
+                                    else if (iv == "CUBICSPLINE") s.interpolation = 2;
+                                    else s.interpolation = 0;
+                                }
+                            }
+                            int dummyComps = 0;
+                            readAccessorFloats(inputAcc, s.input, dummyComps);
+                            readAccessorFloats(outputAcc, s.output, s.components);
+                            anim.samplers.push_back(std::move(s));
+                            p = endObj;
+                        }
+                    }
+                }
+
+                // Parse channels
+                const char* chan = jsonFindKey(animArr, endAnim - animArr, "channels");
+                if (chan) {
+                    const char* chanStart = strchr(chan, '[');
+                    const char* chanEnd = chanStart ? jsonSkipArray(chanStart) : nullptr;
+                    if (chanStart && chanEnd) {
+                        const char* p = chanStart + 1;
+                        while (p < chanEnd && *p) {
+                            while (p < chanEnd && *p && *p != '{') p++;
+                            if (p >= chanEnd || *p != '{') break;
+                            const char* endObj = jsonSkipObject(p);
+                            GLBAnimChannel c{};
+                            const char* s = jsonFindKey(p, endObj - p, "sampler");
+                            if (s) c.sampler = jsonParseInt(s);
+                            const char* node = jsonFindKey(p, endObj - p, "node");
+                            if (node) c.targetNode = jsonParseInt(node);
+                            const char* path = jsonFindKey(p, endObj - p, "path");
+                            if (path) {
+                                const char* ps = nullptr;
+                                const char* pstart = jsonParseString(path, &ps);
+                                if (pstart && ps) {
+                                    std::string pv(pstart, ps - pstart);
+                                    if (pv == "translation") c.path = 0;
+                                    else if (pv == "rotation") c.path = 1;
+                                    else if (pv == "scale") c.path = 2;
+                                    else c.path = -1; // unsupported (e.g. weights)
+                                }
+                            }
+                            if (c.path >= 0) anim.channels.push_back(c);
+                            p = endObj;
+                        }
+                    }
+                }
+
+                // Compute duration = max input time across samplers
+                for (const auto& s : anim.samplers) {
+                    if (!s.input.empty()) {
+                        float last = s.input.back();
+                        if (last > anim.duration) anim.duration = last;
+                    }
+                }
+
+                outScene.animations.push_back(std::move(anim));
+                animArr = endAnim;
+            }
+        }
+    }
+
     // Parse scene root
     const char* sceneKey = jsonFindKey(jsonStr, jsonLen, "scene");
     if (sceneKey) outScene.sceneRootNode = jsonParseInt(sceneKey);
 
-    LOGI("GLB parsed: %zu nodes, %zu skins, %zu meshes", outScene.nodes.size(), outScene.skins.size(), outScene.meshes.size());
+    LOGI("GLB parsed: %zu nodes, %zu skins, %zu meshes, %zu materials, %zu animations",
+         outScene.nodes.size(), outScene.skins.size(), outScene.meshes.size(),
+         outScene.materials.size(), outScene.animations.size());
     return !outScene.meshes.empty();
 }

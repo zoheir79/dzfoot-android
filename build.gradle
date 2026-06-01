@@ -76,9 +76,9 @@ tasks.register('extractNativeLibraries') {
     }
 }
 
-// Ensure the extraction task runs before any native build task
+// Ensure the extraction tasks run before any native build task
 tasks.configureEach { task ->
-    if (task.name.contains("externalNativeBuild") || 
+    if (task.name.contains("externalNativeBuild") ||
         task.name.contains("generateJsonModel") ||
         task.name.contains("CMake")) {
         task.dependsOn(extractNativeLibraries)

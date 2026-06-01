@@ -32,6 +32,7 @@ class LiveKitManager(private val activity: MainActivity) {
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
                             "ev" -> activity.jni.nativeOnGameEvent(event.data)
+                            "tac" -> activity.jni.nativeOnTacticalState(event.data)
                         }
                     }
                     is RoomEvent.ParticipantConnected -> {

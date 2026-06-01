@@ -25,12 +25,12 @@ static ARManager gArManager;
 static ARRenderer gRenderer;
 static GameBridge gGameBridge;
 static InputManager gInputManager;
-static AnimationPlayer gAnimPlayer;
+AnimationPlayer gAnimPlayer;
 AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
 static bool gAnimLoaded = false;
-static jobject gActivityObj = nullptr;
-static JavaVM* gJavaVM = nullptr;
+jobject gActivityObj = nullptr;
+JavaVM* gJavaVM = nullptr;
 
 extern "C" {
 
@@ -87,9 +87,10 @@ Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);  // Disabled: simpler debug, can enable once winding verified
     
-    // GL context is fresh on every surface creation (orientation, pause/resume).
-    // Old programs/VAOs from prior context are invalid; recreate everything.
-    gRenderer.destroy(); // Free old GL resources safely
+    if (gRendererInited) {
+        gRenderer.destroy();
+        gRendererInited = false;
+    }
     gRenderer.init();
     gRendererInited = true;
     LOGI("Renderer init OK (GL context ready)");
@@ -148,29 +149,28 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         const dzfoot::PlayerInputPacket& input = gInputManager.getInput();
         float speed = 0.05f;
         gs.players[0].pos[0] += input.dirX * speed;
-        gs.players[0].pos[2] += input.dirZ * speed;
+        gs.players[0].pos[1] += input.dirZ * speed;
+        gs.players[0].vel[0] = input.dirX * speed;
+        gs.players[0].vel[1] = input.dirZ * speed;
+        gs.players[0].vel[2] = 0.0f;
+        if (std::fabs(input.dirX) > 0.001f || std::fabs(input.dirZ) > 0.001f) {
+            gs.players[0].rotY = std::atan2(input.dirX, input.dirZ);
+            gs.players[0].anim = input.buttons & dzfoot::BUTTON_SPRINT ? dzfoot::ANIM_SPRINT : dzfoot::ANIM_WALK;
+        } else {
+            gs.players[0].anim = dzfoot::ANIM_IDLE;
+        }
         if (gs.players[0].pos[0] < -5.0f) gs.players[0].pos[0] = -5.0f;
         if (gs.players[0].pos[0] > 5.0f) gs.players[0].pos[0] = 5.0f;
-        if (gs.players[0].pos[2] < -2.0f) gs.players[0].pos[2] = -2.0f;
-        if (gs.players[0].pos[2] > 2.0f) gs.players[0].pos[2] = 2.0f;
+        if (gs.players[0].pos[1] < -2.0f) gs.players[0].pos[1] = -2.0f;
+        if (gs.players[0].pos[1] > 2.0f) gs.players[0].pos[1] = 2.0f;
         gs.ball.pos[0] = gs.players[0].pos[0] + 0.15f;
-        gs.ball.pos[1] = 0.25f;
-        gs.ball.pos[2] = gs.players[0].pos[2];
-    }
-
-    // Load animation binary once
-    if (!gAnimLoaded && gAssetManager) {
-        std::vector<uint8_t> animData = AssetLoader::loadAsBytes(gAssetManager, "anim_templates.bin");
-        if (!animData.empty()) {
-            gAnimPlayer.loadFromBinary(animData.data(), animData.size());
-            gAnimLoaded = true;
-            LOGI("Animation binary loaded");
-        }
+        gs.ball.pos[1] = gs.players[0].pos[1];
+        gs.ball.pos[2] = 0.25f;
     }
 
     // Update animation state (speed-adaptive cycle to avoid sliding)
     float vx = gs.players[0].vel[0];
-    float vz = gs.players[0].vel[2];
+    float vz = gs.players[0].vel[1];
     float speedVal = std::sqrt(vx*vx + vz*vz);
     
     // Scale animation play rate dynamically based on current speed relative to a base
@@ -192,27 +192,23 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     gAnimPlayer.play(desiredAnim);
     gAnimPlayer.update(0.016f * animSpeedScale);
 
-    // NOTE: Skeletal skinning (hierarchical bone accumulation + inverse bind
-    // matrices) is not yet implemented, so the animation bone matrices would
-    // collapse the mesh and make players invisible. Until full skinning lands,
-    // render players in BIND POSE by passing identity bone matrices:
-    //   skinMatrix = I * (w0+w1+w2+w3) = I  =>  skinnedPos = a_Position
-    constexpr int kNumBones = 14;
-    float boneMats[32 * 16];
-    for (int b = 0; b < kNumBones; ++b) {
-        float* m = boneMats + b * 16;
-        for (int j = 0; j < 16; ++j) m[j] = (j % 5 == 0) ? 1.0f : 0.0f;
-    }
-    int numBones = kNumBones;
-
     float positions[66]; // 22 players * 3
+    uint8_t playerAnims[22];
+    float playerVels[66];
+    float playerRotY[22];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
-        positions[i * 3 + 1] = gs.players[i].pos[1];
-        positions[i * 3 + 2] = gs.players[i].pos[2];
+        positions[i * 3 + 1] = gs.players[i].pos[2];
+        positions[i * 3 + 2] = gs.players[i].pos[1];
+        playerAnims[i] = gs.players[i].anim;
+        playerVels[i * 3 + 0] = gs.players[i].vel[0];
+        playerVels[i * 3 + 1] = gs.players[i].vel[2];
+        playerVels[i * 3 + 2] = gs.players[i].vel[1];
+        playerRotY[i] = gs.players[i].rotY;
     }
-    float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
-    gRenderer.renderScene(gArManager, positions, 22, ballPos, boneMats, numBones);
+    float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[2], gs.ball.pos[1] };
+    gRenderer.renderScene(gArManager, positions, 22, ballPos,
+                          nullptr, 0, playerAnims, playerVels, playerRotY);
 }
 
 JNIEXPORT void JNICALL
@@ -275,6 +271,14 @@ Java_com_football_ar_JniBridge_nativeOnGameEvent(
     JNIEnv* env, jobject thiz, jbyteArray data) {
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     gGameBridge.applyMatchEvent((const uint8_t*)bytes, env->GetArrayLength(data));
+    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeOnTacticalState(
+    JNIEnv* env, jobject thiz, jbyteArray data) {
+    jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+    gGameBridge.applyTacticalState((const uint8_t*)bytes, env->GetArrayLength(data));
     env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
 }
 
