@@ -11,6 +11,7 @@ public:
     static constexpr float INTERP_DELAY_MS = 100.0f; // ~100ms behind
 
     void addState(const dzfoot::GameStatePacket& state);
+    void clear() { head_ = 0; count_ = 0; }
 
     // Interpolate all player positions and ball into 'out' at 'renderTimeMs' (current time - delay)
     void interpolate(float renderTimeMs, dzfoot::GameStatePacket& out) const;

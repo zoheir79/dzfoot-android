@@ -3,12 +3,15 @@
 #include <cmath>
 
 void Transform::quatToMat4(const float* q, float* m) {
+    // COLUMN-MAJOR layout (index = col*4 + row), consistent with mat4Mul and
+    // composeTRS. Previously this was ROW-major, which transposed (=inverted)
+    // every rotation and silently broke the player body yaw (modelRot).
     float xx = q[0]*q[0], yy = q[1]*q[1], zz = q[2]*q[2];
     float xy = q[0]*q[1], xz = q[0]*q[2], yz = q[1]*q[2];
     float wx = q[3]*q[0], wy = q[3]*q[1], wz = q[3]*q[2];
-    m[0] = 1 - 2*(yy+zz); m[1] = 2*(xy-wz);   m[2] = 2*(xz+wy);   m[3] = 0;
-    m[4] = 2*(xy+wz);   m[5] = 1 - 2*(xx+zz); m[6] = 2*(yz-wx);   m[7] = 0;
-    m[8] = 2*(xz-wy);   m[9] = 2*(yz+wx);   m[10]= 1 - 2*(xx+yy); m[11]= 0;
+    m[0] = 1 - 2*(yy+zz); m[1] = 2*(xy+wz);   m[2] = 2*(xz-wy);   m[3] = 0;
+    m[4] = 2*(xy-wz);   m[5] = 1 - 2*(xx+zz); m[6] = 2*(yz+wx);   m[7] = 0;
+    m[8] = 2*(xz+wy);   m[9] = 2*(yz-wx);   m[10]= 1 - 2*(xx+yy); m[11]= 0;
     m[12]= 0;           m[13]= 0;           m[14]= 0;           m[15]= 1;
 }
 

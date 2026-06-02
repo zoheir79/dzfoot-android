@@ -4,6 +4,7 @@
 #include "GLBLoader.h"
 #include "SceneGraph.h"
 #include "Camera.h"
+#include "DirectionalAnimBank.h"
 #include <GLES3/gl3.h>
 #include <string>
 #include <vector>
@@ -43,7 +44,7 @@ public:
     void draw(const float* viewProj, const float* playerWorld, float rotY,
               uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
               GLuint staticShader, GLuint skinnedShader, const float* teamColor,
-              int playerIndex = -1);
+              int playerIndex = -1, const DirAnimClip* dirClip = nullptr);
     void destroy();
 };
 
@@ -82,7 +83,8 @@ public:
                      const float* ballPosition,
                      const float* boneMatrices = nullptr, int numBones = 0,
                      const uint8_t* playerAnims = nullptr, const float* playerVels = nullptr,
-                     const float* playerRotY = nullptr);
+                     const float* playerRotY = nullptr,
+                     const uint8_t* playerFlags = nullptr, const uint8_t* playerTeams = nullptr);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
 
@@ -99,10 +101,14 @@ private:
     SceneGraph scene_;
     Camera camera_;
     PlayerRig playerRig_;
+    DirectionalAnimBank dirAnimBank_;
     PlayerAnimState playerAnims_[22];
     GLuint pitchTex_ = 0;
     GLuint ballTex_ = 0;
     GLuint stadiumTex_ = 0;
+    GLuint crowdTex_ = 0;
+    GLuint goalnettingTex_ = 0;
+    GLuint pitchOverlayTex_ = 0;
 
     // Pitch GLB half-extents in local space (meters), used to normalize grass lines
     float pitchHalf_[2] = { 52.5f, 34.0f };
@@ -115,5 +121,6 @@ private:
     void renderStaticObjects(const float* viewProj);
     void renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
                        const uint8_t* playerAnims, const float* playerVels,
-                       const float* playerRotY);
+                       const float* playerRotY,
+                       const uint8_t* playerFlags, const uint8_t* playerTeams);
 };

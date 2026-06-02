@@ -18,7 +18,7 @@
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_NATIVE_FIX_POS_ROT_ANIM_2026_06_01_1437";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_QUAT_2026_06_02_0125";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -60,6 +60,11 @@ Java_com_football_ar_JniBridge_nativeInit(JNIEnv* env, jobject thiz, jobject con
     }
     LOGI("Native init OK (emulator=%d)", isEmulator);
     return JNI_TRUE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_football_ar_JniBridge_nativeGetBuildMarker(JNIEnv* env, jobject thiz) {
+    return env->NewStringUTF(NATIVE_BUILD_MARKER);
 }
 
 JNIEXPORT void JNICALL
@@ -116,6 +121,13 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     if (!gArManager.update()) return;
 
+    // Diagnostic: confirm nativeOnFrame is executing
+    static int frameNum = 0;
+    if (frameNum++ % 120 == 0) {
+        LOGI("%s frame=%d gsLen=%d", NATIVE_BUILD_MARKER, frameNum,
+             gameStateData ? env->GetArrayLength(gameStateData) : -1);
+    }
+
     // Clear screen (vivid stadium sky blue gradient)
     glClearColor(0.45f, 0.72f, 0.95f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -165,8 +177,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         }
         if (gs.players[0].pos[0] < -1.0f) gs.players[0].pos[0] = -1.0f;
         if (gs.players[0].pos[0] > 1.0f) gs.players[0].pos[0] = 1.0f;
-        if (gs.players[0].pos[1] < -1.0f) gs.players[0].pos[1] = -1.0f;
-        if (gs.players[0].pos[1] > 1.0f) gs.players[0].pos[1] = 1.0f;
+        if (gs.players[0].pos[1] < -0.43f) gs.players[0].pos[1] = -0.43f;
+        if (gs.players[0].pos[1] > 0.43f) gs.players[0].pos[1] = 0.43f;
         gs.ball.pos[0] = gs.players[0].pos[0] + 0.15f;
         gs.ball.pos[1] = gs.players[0].pos[1];
         gs.ball.pos[2] = 0.25f;
@@ -176,19 +188,31 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     uint8_t playerAnims[22];
     float playerVels[66];
     float playerRotY[22];
+    uint8_t playerFlags[22];
+    uint8_t playerTeams[22];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
         positions[i * 3 + 1] = gs.players[i].pos[1];
         positions[i * 3 + 2] = gs.players[i].pos[2];
         playerAnims[i] = gs.players[i].anim;
-        playerVels[i * 3 + 0] = gs.players[i].vel[0];
-        playerVels[i * 3 + 1] = gs.players[i].vel[1];
-        playerVels[i * 3 + 2] = gs.players[i].vel[2];
+        
+        // Pass stable direction vector for heading angle selection, and actual scalar speed.
+        // Server vel is noisy/small; dir is stable and computed on the server from physical direction.
+        float vx = gs.players[i].vel[0];
+        float vy = gs.players[i].vel[1]; // width
+        float speed = std::sqrt(vx * vx + vy * vy);
+        playerVels[i * 3 + 0] = gs.players[i].dir[0];
+        playerVels[i * 3 + 1] = gs.players[i].dir[1];
+        playerVels[i * 3 + 2] = speed;
+        
         playerRotY[i] = gs.players[i].rotY;
+        playerFlags[i] = gs.players[i].flags;
+        playerTeams[i] = gs.players[i].team;
     }
     float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
     gRenderer.renderScene(gArManager, positions, 22, ballPos,
-                          nullptr, 0, playerAnims, playerVels, playerRotY);
+                          nullptr, 0, playerAnims, playerVels, playerRotY,
+                          playerFlags, playerTeams);
 }
 
 JNIEXPORT void JNICALL

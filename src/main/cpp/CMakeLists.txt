@@ -29,6 +29,7 @@ add_library(football_ar SHARED
     EntityInterpolator.cpp
     PredictionBuffer.cpp
     DeadReckoning.cpp
+    DirectionalAnimBank.cpp
     tests/test_protocol_layout.cpp
 )
 

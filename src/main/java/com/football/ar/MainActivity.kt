@@ -1,10 +1,13 @@
 package com.football.ar
 
+import android.content.Context
 import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Vibrator
+import android.os.VibrationEffect
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -12,6 +15,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.ar.core.ArCoreApk
 import javax.microedition.khronos.egl.EGLConfig
@@ -40,6 +44,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         Log.i("MainActivity", "About to call nativeInit ...")
         val initOk = jni.nativeInit(this, assets, isEmulator())
         Log.i("MainActivity", "nativeInit returned: $initOk")
+        val marker = jni.nativeGetBuildMarker()
+        Log.i("MainActivity", "Native build marker: $marker")
+        Toast.makeText(this, "Native: $marker", Toast.LENGTH_LONG).show()
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
@@ -47,6 +54,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
 
         audioSystem.init()
+        loadSounds()
 
         scoreText = TextView(this).apply {
             textSize = 24f
@@ -345,6 +353,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView.onResume()
         jni.nativeResume(this)
         audioSystem.init()
+        loadSounds()
     }
 
     override fun onPause() {
@@ -365,4 +374,155 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     fun nativeAudioSetVolume(vol: Float) { audioSystem.setVolume(vol) }
     fun nativeAudioPlayLoop(name: String) { audioSystem.playLoop(name) }
     fun nativeAudioStopLoop() { audioSystem.stopLoop() }
+
+    private fun loadSounds() {
+        val sounds = listOf(
+            "ballsound", "crowd01", "crowd02",
+            "goalpost", "whistle2", "whistle3"
+        )
+        for (name in sounds) {
+            try {
+                assets.open("sounds/$name.ogg").use { stream ->
+                    val data = stream.readBytes()
+                    audioSystem.loadSound(name, data)
+                }
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Sound $name not found in assets: ${e.message}")
+            }
+        }
+    }
+
+    fun handleMatchEvent(data: ByteArray) {
+        if (data.size < 36) return
+
+        val eventType = data[12].toInt() and 0xFF
+        val team      = data[13].toInt() and 0xFF
+        val playerIdx = data[14].toInt() and 0xFF
+        val scoreA    = data[32].toInt() and 0xFF
+        val scoreB    = data[33].toInt() and 0xFF
+
+        Log.i("MainActivity", "handleMatchEvent: type=$eventType team=$team player=$playerIdx score=$scoreA-$scoreB")
+
+        when (eventType) {
+            0  -> onGoal(team, playerIdx, scoreA, scoreB)
+            1  -> onYellowCard(team, playerIdx)
+            2  -> onRedCard(team, playerIdx)
+            3  -> onSubstitution(team, playerIdx)
+            4  -> onSetPiece("CORNER", team)
+            5  -> onSetPiece("THROW-IN", team)
+            6  -> onSetPiece("FREE KICK", team)
+            7  -> onSetPiece("PENALTY", team)
+            8  -> onKickOff()
+            9  -> onEndMatch(scoreA, scoreB)
+            10 -> onHalfTime()
+            11 -> onSetPiece("GOAL KICK", team)
+            12 -> onSetPiece("OFFSIDE", team)
+            13 -> onFoul(team, playerIdx)
+            15 -> onShot()
+            16 -> onPass()
+        }
+    }
+
+    private fun onGoal(team: Int, playerIdx: Int, scoreA: Int, scoreB: Int) {
+        audioSystem.play("whistle2")
+        Handler(Looper.getMainLooper()).postDelayed({
+            audioSystem.play("crowd01")
+        }, 500)
+        vibrate(500)
+
+        val teamName = if (team == 0) "Team A" else "Team B"
+        showEventOverlay("⚽ GOAL! $teamName\n$scoreA - $scoreB", 3000)
+
+        runOnUiThread {
+            scoreText.text = "$scoreA - $scoreB"
+        }
+    }
+
+    private fun onYellowCard(team: Int, playerIdx: Int) {
+        audioSystem.play("whistle3")
+        vibrate(200)
+        val teamName = if (team == 0) "Team A" else "Team B"
+        showEventOverlay("🟨 YELLOW CARD — $teamName #$playerIdx", 2000)
+    }
+
+    private fun onRedCard(team: Int, playerIdx: Int) {
+        audioSystem.play("whistle3")
+        vibrate(400)
+        val teamName = if (team == 0) "Team A" else "Team B"
+        showEventOverlay("🟥 RED CARD — $teamName #$playerIdx", 3000)
+    }
+
+    private fun onSubstitution(team: Int, playerIdx: Int) {
+        val teamName = if (team == 0) "Team A" else "Team B"
+        showEventOverlay("🔄 SUBSTITUTION — $teamName", 2000)
+    }
+
+    private fun onSetPiece(name: String, team: Int) {
+        audioSystem.play("whistle2")
+        val teamName = if (team == 0) "Team A" else "Team B"
+        showEventOverlay("$name — $teamName", 1500)
+    }
+
+    private fun onFoul(team: Int, playerIdx: Int) {
+        audioSystem.play("whistle3")
+        vibrate(100)
+        showEventOverlay("⚠️ FOUL", 1000)
+    }
+
+    private fun onShot() {
+        audioSystem.play("ballsound")
+    }
+
+    private fun onPass() {
+        // Subtle pass sound can be played here if desired
+    }
+
+    private fun onKickOff() {
+        audioSystem.play("whistle2")
+        showEventOverlay("🔥 KICK OFF!", 2000)
+        audioSystem.playLoop("crowd02")
+    }
+
+    private fun onHalfTime() {
+        audioSystem.play("whistle2")
+        audioSystem.stopLoop()
+        showEventOverlay("🏁 HALF TIME", 3000)
+    }
+
+    private fun onEndMatch(scoreA: Int, scoreB: Int) {
+        audioSystem.play("whistle2")
+        audioSystem.stopLoop()
+        showEventOverlay("🏆 FULL TIME\n$scoreA - $scoreB", 5000)
+    }
+
+    private fun showEventOverlay(text: String, durationMs: Long) {
+        runOnUiThread {
+            eventText.text = text
+            eventText.visibility = View.VISIBLE
+            eventText.alpha = 0f
+            eventText.animate().alpha(1f).setDuration(200).start()
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                eventText.animate().alpha(0f).setDuration(500).withEndAction {
+                    eventText.visibility = View.GONE
+                }.start()
+            }, durationMs)
+        }
+    }
+
+    private fun vibrate(ms: Long) {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(ms)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Vibration failed: ${e.message}")
+        }
+    }
 }

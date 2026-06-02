@@ -31,7 +31,10 @@ class LiveKitManager(private val activity: MainActivity) {
                         android.util.Log.d("LiveKitManager", "DataReceived topic=${event.topic} size=${event.data.size}")
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
-                            "ev" -> activity.jni.nativeOnGameEvent(event.data)
+                            "ev" -> {
+                                activity.jni.nativeOnGameEvent(event.data)
+                                activity.handleMatchEvent(event.data)
+                            }
                             "tac" -> activity.jni.nativeOnTacticalState(event.data)
                         }
                     }

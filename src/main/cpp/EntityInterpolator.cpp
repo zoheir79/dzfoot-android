@@ -31,21 +31,36 @@ void EntityInterpolator::lerpFloat(float a, float b, float t, float& out) {
 void EntityInterpolator::interpolate(float renderTimeMs, dzfoot::GameStatePacket& out) const {
     if (count_ == 0) return;
 
-    // Find two states surrounding renderTimeMs
+    if (count_ < 2) {
+        out = buffer_[head_].state;
+        return;
+    }
+
+    // Find two states tightly bounding renderTimeMs chronologically
     int idxA = -1, idxB = -1;
-    for (int i = 0; i < count_; ++i) {
-        int idx = (head_ - i + MAX_STATES) % MAX_STATES;
-        if (buffer_[idx].receiveTimeMs <= renderTimeMs) {
-            idxA = idx;
-            idxB = (idx + 1) % MAX_STATES;
-            if (i == 0) idxB = head_; // edge case
+    for (int i = 0; i < count_ - 1; ++i) {
+        // Chronological indexes (oldest to newest)
+        // Oldest is head_ - count_ + 1 (wrapped)
+        int idx1 = (head_ - count_ + 1 + i + MAX_STATES) % MAX_STATES;
+        int idx2 = (idx1 + 1) % MAX_STATES;
+        
+        if (buffer_[idx1].receiveTimeMs <= renderTimeMs && buffer_[idx2].receiveTimeMs >= renderTimeMs) {
+            idxA = idx1;
+            idxB = idx2;
             break;
         }
     }
 
     if (idxA < 0) {
-        // renderTime older than oldest state: use oldest
-        out = buffer_[(head_ - count_ + 1 + MAX_STATES) % MAX_STATES].state;
+        // renderTimeMs is outside the buffer range
+        // If older than oldest state: use oldest state
+        float oldestTime = buffer_[(head_ - count_ + 1 + MAX_STATES) % MAX_STATES].receiveTimeMs;
+        if (renderTimeMs < oldestTime) {
+            out = buffer_[(head_ - count_ + 1 + MAX_STATES) % MAX_STATES].state;
+        } else {
+            // Newer than newest state: use newest state (head_)
+            out = buffer_[head_].state;
+        }
         return;
     }
 
