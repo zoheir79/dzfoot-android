@@ -40,6 +40,12 @@ public:
     GLuint shortTex = 0;
     GLuint defaultSkinTex = 0;
 
+    // Persistent scratch buffers (resized once) to eliminate per-frame allocations
+    std::vector<float> scratchT, scratchR, scratchS;
+    std::vector<float> scratchCurT, scratchCurR, scratchCurS;
+    std::vector<float> scratchPrevT, scratchPrevR, scratchPrevS;
+    std::vector<float> scratchGlobalMats;
+
     bool load(const char* filename);
     void draw(const float* viewProj, const float* playerWorld, float rotY,
               uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,

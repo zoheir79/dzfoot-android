@@ -325,6 +325,16 @@ void PlayerRig::destroy() {
     if (shortTex && shortTex != kitTex) { glDeleteTextures(1, &shortTex); }
     shortTex = 0;
     defaultSkinTex = 0;
+    scratchT.clear(); scratchT.shrink_to_fit();
+    scratchR.clear(); scratchR.shrink_to_fit();
+    scratchS.clear(); scratchS.shrink_to_fit();
+    scratchCurT.clear(); scratchCurT.shrink_to_fit();
+    scratchCurR.clear(); scratchCurR.shrink_to_fit();
+    scratchCurS.clear(); scratchCurS.shrink_to_fit();
+    scratchPrevT.clear(); scratchPrevT.shrink_to_fit();
+    scratchPrevR.clear(); scratchPrevR.shrink_to_fit();
+    scratchPrevS.clear(); scratchPrevS.shrink_to_fit();
+    scratchGlobalMats.clear(); scratchGlobalMats.shrink_to_fit();
 }
 
 // Compose a column-major TRS matrix (matches GLBLoader convention)
@@ -412,18 +422,29 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
     // 1. Per-node animated TRS: start from bind pose, then override animated channels
     const size_t N = nodes.size();
-    std::vector<float> nodeT(N * 3), nodeR(N * 4), nodeS(N * 3);
+    // Resize persistent scratch buffers once (no-op after first call)
+    scratchT.resize(N * 3); scratchR.resize(N * 4); scratchS.resize(N * 3);
+    scratchCurT.resize(N * 3); scratchCurR.resize(N * 4); scratchCurS.resize(N * 3);
+    scratchPrevT.resize(N * 3); scratchPrevR.resize(N * 4); scratchPrevS.resize(N * 3);
+    scratchGlobalMats.resize(N * 16);
+
     for (size_t i = 0; i < N; ++i) {
-        std::memcpy(&nodeT[i * 3], nodes[i].bindT, 3 * sizeof(float));
-        std::memcpy(&nodeR[i * 4], nodes[i].bindR, 4 * sizeof(float));
-        std::memcpy(&nodeS[i * 3], nodes[i].bindS, 3 * sizeof(float));
+        std::memcpy(&scratchT[i * 3], nodes[i].bindT, 3 * sizeof(float));
+        std::memcpy(&scratchR[i * 4], nodes[i].bindR, 4 * sizeof(float));
+        std::memcpy(&scratchS[i * 3], nodes[i].bindS, 3 * sizeof(float));
     }
 
     static int animDbgCounter = 0;
     bool animDbg = (playerIndex == 0) && (animDbgCounter++ % 120 == 0);
 
-    std::vector<float> curT = nodeT, curR = nodeR, curS = nodeS;
-    std::vector<float> prevT = nodeT, prevR = nodeR, prevS = nodeS;
+    std::vector<float> &curT = scratchCurT, &curR = scratchCurR, &curS = scratchCurS;
+    std::vector<float> &prevT = scratchPrevT, &prevR = scratchPrevR, &prevS = scratchPrevS;
+    std::memcpy(curT.data(), scratchT.data(), N * 3 * sizeof(float));
+    std::memcpy(curR.data(), scratchR.data(), N * 4 * sizeof(float));
+    std::memcpy(curS.data(), scratchS.data(), N * 3 * sizeof(float));
+    std::memcpy(prevT.data(), scratchT.data(), N * 3 * sizeof(float));
+    std::memcpy(prevR.data(), scratchR.data(), N * 4 * sizeof(float));
+    std::memcpy(prevS.data(), scratchS.data(), N * 3 * sizeof(float));
 
     // Sample current animation (prefer external DirAnimClip from compile bank)
     if (dirClip) {
@@ -483,15 +504,15 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             sampleSampler(s, tt, val);
             if (ch.path == 0) {        // translation
                 if (ch.targetNode == 0) continue;
-                std::memcpy(&curT[ch.targetNode * 3], val, 3 * sizeof(float));
+                std::memcpy(&scratchCurT[ch.targetNode * 3], val, 3 * sizeof(float));
             } else if (ch.path == 1) { // rotation
-                std::memcpy(&curR[ch.targetNode * 4], val, 4 * sizeof(float));
+                std::memcpy(&scratchCurR[ch.targetNode * 4], val, 4 * sizeof(float));
                 if (animDbg && ch.targetNode == 1) {
                     LOGI("[animDbg] node1 body rot = (%.3f, %.3f, %.3f, %.3f)",
                          val[0], val[1], val[2], val[3]);
                 }
             } else if (ch.path == 2) { // scale
-                std::memcpy(&curS[ch.targetNode * 3], val, 3 * sizeof(float));
+                std::memcpy(&scratchCurS[ch.targetNode * 3], val, 3 * sizeof(float));
             }
         }
     } else if (animDbg) {
@@ -523,11 +544,11 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             sampleSampler(s, prevTt, val);
             if (ch.path == 0) {
                 if (ch.targetNode == 0) continue;
-                std::memcpy(&prevT[ch.targetNode * 3], val, 3 * sizeof(float));
+                std::memcpy(&scratchPrevT[ch.targetNode * 3], val, 3 * sizeof(float));
             } else if (ch.path == 1) {
-                std::memcpy(&prevR[ch.targetNode * 4], val, 4 * sizeof(float));
+                std::memcpy(&scratchPrevR[ch.targetNode * 4], val, 4 * sizeof(float));
             } else if (ch.path == 2) {
-                std::memcpy(&prevS[ch.targetNode * 3], val, 3 * sizeof(float));
+                std::memcpy(&scratchPrevS[ch.targetNode * 3], val, 3 * sizeof(float));
             }
         }
     }
@@ -535,32 +556,31 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     // Blend current and previous TRS poses
     for (size_t i = 0; i < N; ++i) {
         if (isBlending) {
-            nodeT[i * 3 + 0] = prevT[i * 3 + 0] + blend * (curT[i * 3 + 0] - prevT[i * 3 + 0]);
-            nodeT[i * 3 + 1] = prevT[i * 3 + 1] + blend * (curT[i * 3 + 1] - prevT[i * 3 + 1]);
-            nodeT[i * 3 + 2] = prevT[i * 3 + 2] + blend * (curT[i * 3 + 2] - prevT[i * 3 + 2]);
+            scratchT[i * 3 + 0] = scratchPrevT[i * 3 + 0] + blend * (scratchCurT[i * 3 + 0] - scratchPrevT[i * 3 + 0]);
+            scratchT[i * 3 + 1] = scratchPrevT[i * 3 + 1] + blend * (scratchCurT[i * 3 + 1] - scratchPrevT[i * 3 + 1]);
+            scratchT[i * 3 + 2] = scratchPrevT[i * 3 + 2] + blend * (scratchCurT[i * 3 + 2] - scratchPrevT[i * 3 + 2]);
 
-            quatSlerpLocal(&prevR[i * 4], &curR[i * 4], blend, &nodeR[i * 4]);
+            quatSlerpLocal(&scratchPrevR[i * 4], &scratchCurR[i * 4], blend, &scratchR[i * 4]);
 
-            nodeS[i * 3 + 0] = prevS[i * 3 + 0] + blend * (curS[i * 3 + 0] - prevS[i * 3 + 0]);
-            nodeS[i * 3 + 1] = prevS[i * 3 + 1] + blend * (curS[i * 3 + 1] - prevS[i * 3 + 1]);
-            nodeS[i * 3 + 2] = prevS[i * 3 + 2] + blend * (curS[i * 3 + 2] - prevS[i * 3 + 2]);
+            scratchS[i * 3 + 0] = scratchPrevS[i * 3 + 0] + blend * (scratchCurS[i * 3 + 0] - scratchPrevS[i * 3 + 0]);
+            scratchS[i * 3 + 1] = scratchPrevS[i * 3 + 1] + blend * (scratchCurS[i * 3 + 1] - scratchPrevS[i * 3 + 1]);
+            scratchS[i * 3 + 2] = scratchPrevS[i * 3 + 2] + blend * (scratchCurS[i * 3 + 2] - scratchPrevS[i * 3 + 2]);
         } else {
-            std::memcpy(&nodeT[i * 3], &curT[i * 3], 3 * sizeof(float));
-            std::memcpy(&nodeR[i * 4], &curR[i * 4], 4 * sizeof(float));
-            std::memcpy(&nodeS[i * 3], &curS[i * 3], 3 * sizeof(float));
+            std::memcpy(&scratchT[i * 3], &scratchCurT[i * 3], 3 * sizeof(float));
+            std::memcpy(&scratchR[i * 4], &scratchCurR[i * 4], 4 * sizeof(float));
+            std::memcpy(&scratchS[i * 3], &scratchCurS[i * 3], 3 * sizeof(float));
         }
     }
 
     // 2. Compose local matrices from animated TRS and accumulate into global matrices
-    std::vector<float> globalMats(N * 16);
     for (size_t i = 0; i < N; ++i) {
         const auto& rn = nodes[i];
         float localMat[16];
-        composeTRS(&nodeT[i * 3], &nodeR[i * 4], &nodeS[i * 3], localMat);
+        composeTRS(&scratchT[i * 3], &scratchR[i * 4], &scratchS[i * 3], localMat);
 
-        float* gm = &globalMats[i * 16];
+        float* gm = &scratchGlobalMats[i * 16];
         if (rn.parentIndex >= 0) {
-            float* parentGm = &globalMats[rn.parentIndex * 16];
+            float* parentGm = &scratchGlobalMats[rn.parentIndex * 16];
             Transform::mat4Mul(parentGm, localMat, gm);
         } else {
             std::memcpy(gm, localMat, 16 * sizeof(float));
@@ -568,17 +588,17 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     }
     if (animDbg) {
         LOGI("[animDbg] node0 T=(%.3f,%.3f,%.3f) R=(%.4f,%.4f,%.4f,%.4f) S=(%.3f,%.3f,%.3f)",
-             nodeT[0], nodeT[1], nodeT[2], nodeR[0], nodeR[1], nodeR[2], nodeR[3],
-             nodeS[0], nodeS[1], nodeS[2]);
+             scratchT[0], scratchT[1], scratchT[2], scratchR[0], scratchR[1], scratchR[2], scratchR[3],
+             scratchS[0], scratchS[1], scratchS[2]);
         LOGI("[animDbg] node0 globalMat col0=(%.4f,%.4f,%.4f) col3=(%.4f,%.4f,%.4f)",
-             globalMats[0], globalMats[1], globalMats[2],
-             globalMats[12], globalMats[13], globalMats[14]);
+             scratchGlobalMats[0], scratchGlobalMats[1], scratchGlobalMats[2],
+             scratchGlobalMats[12], scratchGlobalMats[13], scratchGlobalMats[14]);
         LOGI("[animDbg] node1 parent=%d T=(%.3f,%.3f,%.3f) R=(%.4f,%.4f,%.4f,%.4f) S=(%.3f,%.3f,%.3f)",
              nodes[1].parentIndex,
-             nodeT[3], nodeT[4], nodeT[5], nodeR[4], nodeR[5], nodeR[6], nodeR[7],
-             nodeS[3], nodeS[4], nodeS[5]);
+             scratchT[3], scratchT[4], scratchT[5], scratchR[4], scratchR[5], scratchR[6], scratchR[7],
+             scratchS[3], scratchS[4], scratchS[5]);
         LOGI("[animDbg] node1 globalMat col0=(%.4f,%.4f,%.4f) [0]=(%.6f)",
-             globalMats[16], globalMats[17], globalMats[18], globalMats[16]);
+             scratchGlobalMats[16], scratchGlobalMats[17], scratchGlobalMats[18], scratchGlobalMats[16]);
     }
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
@@ -628,7 +648,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         if (rn.staticMeshes.empty()) continue;
 
         float partWorld[16];
-        Transform::mat4Mul(modelRot, &globalMats[i * 16], partWorld);
+        Transform::mat4Mul(modelRot, &scratchGlobalMats[i * 16], partWorld);
 
         if (animDbg && i == 1) {
             LOGI("[draw] P%d node1 partWorld scaleX=%.2f trans=(%.2f,%.2f,%.2f)",
