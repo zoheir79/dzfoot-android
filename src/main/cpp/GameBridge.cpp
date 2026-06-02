@@ -29,7 +29,7 @@ GameBridge::GameBridge() {
         state_.players[i].pos[2] = teamA[i][2];
         state_.players[i].team = 0;
         state_.players[i].flags = 1; // is_active
-        state_.players[i].rotY = 1.57079633f; // face +X (attack right): modelYaw = rotY+PI = +4.71 ≡ -1.57
+        state_.players[i].rotY = 1.57079633f; // face +X (attack right): modelYaw = rotY (+Z model)
     }
     for (int i = 0; i < 11; ++i) {
         state_.players[i+11].pos[0] = teamB[i][0];
@@ -37,7 +37,7 @@ GameBridge::GameBridge() {
         state_.players[i+11].pos[2] = teamB[i][2];
         state_.players[i+11].team = 1;
         state_.players[i+11].flags = 1; // is_active
-        state_.players[i+11].rotY = -1.57079633f; // face -X (attack left): modelYaw = rotY+PI = +1.57
+        state_.players[i+11].rotY = -1.57079633f; // face -X (attack left): modelYaw = rotY (+Z model)
     }
     state_.ball.pos[0] = 0; state_.ball.pos[1] = 0; state_.ball.pos[2] = 0.25f;
 }

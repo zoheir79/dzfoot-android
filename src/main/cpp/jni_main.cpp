@@ -18,7 +18,7 @@
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_QUAT_2026_06_02_0125";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_DIR3_2026_06_02_0126";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();

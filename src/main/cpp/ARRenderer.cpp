@@ -583,11 +583,12 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
     float modelRot[16];
-    // DERIVED (not guessed): position maps sceneX=gf_X, sceneZ=gf_Y, and server
-    // rotY=atan2(dir_gf_X, dir_gf_Y). A model facing -Z (glTF standard) rotated by
-    // theta has facing (-sin,-cos); matching it to (dir_gf_X,dir_gf_Y) gives
-    // theta = rotY + PI. (rotY alone -> backwards, confirming -Z forward model.)
-    const float modelYaw = rotY + 3.14159265f;
+    // After fixing quatToMat4 (column-major), rotation is applied correctly so
+    // theta_eff = modelYaw. Empirically rotY+PI gave EXACTLY opposite facing
+    // ("sens contraire"), i.e. off by PI -> the model is +Z forward, so
+    // facing(theta)=(sin,cos) and matching (dir_gf_X,dir_gf_Y)=(sin rotY,cos rotY)
+    // gives theta = rotY. Server rotY verified correct (team0 +X, team1 -X).
+    const float modelYaw = rotY;
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
