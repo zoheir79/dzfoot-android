@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <mutex>
+#include <atomic>
 #include "protocol/DZFootProtocol.h"
 #include "EntityInterpolator.h"
 #include "PredictionBuffer.h"
@@ -14,8 +16,8 @@ public:
     void applyTacticalState(const uint8_t* data, size_t len);
 
     // Raw server state (for prediction/reconciliation)
-    const dzfoot::GameStatePacket& currentState() const { return state_; }
-    const dzfoot::TacticalStatePacket& tacticalState() const { return tacticalState_; }
+    dzfoot::GameStatePacket currentState() const;
+    dzfoot::TacticalStatePacket tacticalState() const;
 
     // Interpolated state for rendering (smooth 20 Hz)
     dzfoot::GameStatePacket getInterpolatedState();
@@ -35,7 +37,7 @@ public:
 private:
     dzfoot::GameStatePacket state_;
     dzfoot::TacticalStatePacket tacticalState_;
-    uint32_t lastAppliedTick_ = 0;
+    std::atomic<uint32_t> lastAppliedTick_ = 0;
     uint32_t lastTacticalTick_ = 0;
     std::vector<dzfoot::MatchEventPacket> pendingEvents_;
     float arViewMatrix_[16];
@@ -46,4 +48,8 @@ private:
     EntityInterpolator interpolator_;
     PredictionBuffer predictor_;
     DeadReckoning deadReckoning_;
+
+    double lastPacketLocalTimeMs_ = 0.0;
+    float lastPacketServerTimeMs_ = 0.0f;
+    mutable std::mutex mutex_;
 };

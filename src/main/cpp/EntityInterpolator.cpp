@@ -28,6 +28,13 @@ void EntityInterpolator::lerpFloat(float a, float b, float t, float& out) {
     out = a + (b - a) * t;
 }
 
+void EntityInterpolator::lerpAngle(float a, float b, float t, float& out) {
+    float diff = b - a;
+    while (diff > 3.14159265f) diff -= 6.28318531f;
+    while (diff < -3.14159265f) diff += 6.28318531f;
+    out = a + diff * t;
+}
+
 void EntityInterpolator::interpolate(float renderTimeMs, dzfoot::GameStatePacket& out) const {
     if (count_ == 0) return;
 
@@ -86,5 +93,6 @@ void EntityInterpolator::interpolate(float renderTimeMs, dzfoot::GameStatePacket
         lerpFloat(snapA.state.players[i].vel[0], snapB.state.players[i].vel[0], t, out.players[i].vel[0]);
         lerpFloat(snapA.state.players[i].vel[1], snapB.state.players[i].vel[1], t, out.players[i].vel[1]);
         lerpFloat(snapA.state.players[i].vel[2], snapB.state.players[i].vel[2], t, out.players[i].vel[2]);
+        lerpAngle(snapA.state.players[i].rotY, snapB.state.players[i].rotY, t, out.players[i].rotY);
     }
 }

@@ -18,7 +18,7 @@
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_DIR3_2026_06_02_0126";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_FIX_2026_06_03_0029";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -132,6 +132,23 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     glClearColor(0.45f, 0.72f, 0.95f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // Apply game state if present and not empty (must happen BEFORE getViewMatrix
+    // so the broadcast camera can focus on the current ball position)
+    if (gameStateData && env->GetArrayLength(gameStateData) > 0) {
+        jbyte* state = env->GetByteArrayElements(gameStateData, nullptr);
+        gGameBridge.applyGameState((const uint8_t*)state, env->GetArrayLength(gameStateData));
+        env->ReleaseByteArrayElements(gameStateData, state, JNI_ABORT);
+    }
+
+    // Point the broadcast camera at the ball. Ball env-coord X in [-1,1] maps to
+    // scene X via scaleX = 5.44 (pitch loaded at 0.1 scale).
+    {
+        dzfoot::GameStatePacket peek = gGameBridge.getInterpolatedState();
+        const float kScaleX = 5.44f;     // matches ARRenderer scaleX
+        const float kScaleZ = 3.60f / 0.42f; // matches ARRenderer scaleZ (8.5714f)
+        gArManager.setCameraFocus(peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ);
+    }
+
     // Get AR matrices
     jfloat* view = env->GetFloatArrayElements(viewMat, nullptr);
     jfloat* proj = env->GetFloatArrayElements(projMat, nullptr);
@@ -146,12 +163,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     env->ReleaseFloatArrayElements(projMat, proj, 0);
     env->ReleaseFloatArrayElements(anchorMat, anchor, 0);
 
-    // Apply game state if present and not empty
-    if (gameStateData && env->GetArrayLength(gameStateData) > 0) {
-        jbyte* state = env->GetByteArrayElements(gameStateData, nullptr);
-        gGameBridge.applyGameState((const uint8_t*)state, env->GetArrayLength(gameStateData));
-        env->ReleaseByteArrayElements(gameStateData, state, JNI_ABORT);
-    }
+    // (GameState already applied above, before the camera view was computed.)
 
     // Render camera background
     gRenderer.drawCameraBackground(gArManager);
@@ -190,6 +202,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     float playerRotY[22];
     uint8_t playerFlags[22];
     uint8_t playerTeams[22];
+    uint8_t playerRoles[22];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
         positions[i * 3 + 1] = gs.players[i].pos[1];
@@ -208,11 +221,12 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerRotY[i] = gs.players[i].rotY;
         playerFlags[i] = gs.players[i].flags;
         playerTeams[i] = gs.players[i].team;
+        playerRoles[i] = gs.players[i].role;
     }
     float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
     gRenderer.renderScene(gArManager, positions, 22, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
-                          playerFlags, playerTeams);
+                          playerFlags, playerTeams, playerRoles);
 }
 
 JNIEXPORT void JNICALL

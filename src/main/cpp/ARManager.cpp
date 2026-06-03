@@ -205,10 +205,16 @@ void ARManager::getViewMatrix(float* out) const {
     if (camera_) {
         ArCamera_getViewMatrix(session_, camera_, out);
     } else {
-        // Fallback camera: close TV broadcast camera (FIFA style)
-        lookAt(out, 0.0f, 2.5f, 3.5f,     // eye: lower and closer to the pitch
-                     0.0f, 0.0f, -0.2f,   // center: midfield
-                     0.0f, 1.0f, 0.0f);   // up: Y is up
+        // Fallback camera: elevated TV broadcast side view that pans with the ball.
+        // Pitch is ~12 units long (X) x ~8 units wide (Z). Camera sits well above
+        // and beyond the -Z sideline, looking down at the pitch, and slides along
+        // X with the ball (damped so the pitch edges stay framed).
+        const float panX   = focusX_ * 0.6f;   // slide along touchline (damped)
+        const float camZ   = -5.5f;            // closer to the sideline (more zoom)
+        const float camY   = 4.5f;             // lower broadcast height -> crops top stands/spotlights
+        lookAt(out, panX, camY, camZ,          // eye: above sideline, panning with ball
+                     panX, -0.3f, 1.0f,         // center: aim slightly down & into pitch (crops spotlights)
+                     0.0f, 1.0f, 0.0f);         // up: Y is up
     }
 }
 
@@ -218,7 +224,7 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
     } else {
         // Simple perspective for fallback (use actual display aspect)
         // Column-major OpenGL projection matrix
-        float fov = 60.0f * 3.14159f / 180.0f;
+        float fov = 28.0f * 3.14159f / 180.0f;  // standard TV broadcast FOV with zoom to hide empty stands
         float f = 1.0f / tanf(fov / 2.0f);
         float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
         // Column-major layout: each group of 4 floats is one COLUMN

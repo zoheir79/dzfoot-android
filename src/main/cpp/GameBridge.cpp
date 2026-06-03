@@ -1,43 +1,25 @@
 #include "GameBridge.h"
 #include <cstring>
+#include <chrono>
 #include <android/log.h>
 
 #define LOG_TAG "ARRenderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
+static double getSteadyTimeMs() {
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(now.time_since_epoch()).count();
+}
+
 GameBridge::GameBridge() {
     std::memset(&state_, 0, sizeof(state_));
     std::memset(&tacticalState_, 0, sizeof(tacticalState_));
-    // Formation 4-3-3 Team A (left side, blue) — all players in own half (X<0)
-    float teamA[11][3] = {
-        {-0.85f,  0.00f, 0.0f}, // GK
-        {-0.70f,  0.30f, 0.0f}, {-0.75f,  0.10f, 0.0f}, {-0.75f, -0.10f, 0.0f}, {-0.70f, -0.30f, 0.0f}, // DEF
-        {-0.45f,  0.20f, 0.0f}, {-0.55f,  0.00f, 0.0f}, {-0.45f, -0.20f, 0.0f}, // MID
-        {-0.15f,  0.25f, 0.0f}, {-0.20f,  0.00f, 0.0f}, {-0.15f, -0.25f, 0.0f}  // FWD (near center, still left half)
-    };
-    // Formation 4-3-3 Team B (right side, red) — all players in own half (X>0)
-    float teamB[11][3] = {
-        { 0.85f,  0.00f, 0.0f}, // GK
-        { 0.70f, -0.30f, 0.0f}, { 0.75f, -0.10f, 0.0f}, { 0.75f,  0.10f, 0.0f}, { 0.70f,  0.30f, 0.0f}, // DEF
-        { 0.45f, -0.20f, 0.0f}, { 0.55f,  0.00f, 0.0f}, { 0.45f,  0.20f, 0.0f}, // MID
-        { 0.15f, -0.25f, 0.0f}, { 0.20f,  0.00f, 0.0f}, { 0.15f,  0.25f, 0.0f}  // FWD (near center, still right half)
-    };
-    for (int i = 0; i < 11; ++i) {
-        state_.players[i].pos[0] = teamA[i][0];
-        state_.players[i].pos[1] = teamA[i][1];
-        state_.players[i].pos[2] = teamA[i][2];
-        state_.players[i].team = 0;
-        state_.players[i].flags = 1; // is_active
-        state_.players[i].rotY = 1.57079633f; // face +X (attack right): modelYaw = rotY (+Z model)
-    }
-    for (int i = 0; i < 11; ++i) {
-        state_.players[i+11].pos[0] = teamB[i][0];
-        state_.players[i+11].pos[1] = teamB[i][1];
-        state_.players[i+11].pos[2] = teamB[i][2];
-        state_.players[i+11].team = 1;
-        state_.players[i+11].flags = 1; // is_active
-        state_.players[i+11].rotY = -1.57079633f; // face -X (attack left): modelYaw = rotY (+Z model)
+    // All players start inactive (flags=0) until the first server packet arrives.
+    // This avoids the "teleportation" snap caused by a hardcoded placeholder
+    // formation that did not match GF's actual kickoff positions.
+    for (int i = 0; i < dzfoot::DZ_MAX_PLAYERS; ++i) {
+        state_.players[i].flags = 0; // inactive until first server state
     }
     state_.ball.pos[0] = 0; state_.ball.pos[1] = 0; state_.ball.pos[2] = 0.25f;
 }
@@ -45,55 +27,38 @@ GameBridge::GameBridge() {
 void GameBridge::applyGameState(const uint8_t* data, size_t len) {
     if (!dzfoot::validateGameStatePacket(data, len)) {
         LOGE("Rejected invalid GameState packet (len=%zu)", len);
-        // Dump first 16 bytes for debugging
-        char hex[49];
-        for (int i = 0; i < 16 && i < (int)len; ++i) {
-            sprintf(hex + i*3, "%02x ", data[i]);
-        }
-        LOGI("GameState header hex: %s", hex);
         return;
     }
-    std::memcpy(&state_, data, sizeof(dzfoot::GameStatePacket));
-    static int gsLogCounter = 0;
-    static bool firstGsLogged = false;
-    bool isFirst = !firstGsLogged;
-    if (isFirst) firstGsLogged = true;
-    if (isFirst || gsLogCounter++ % 60 == 0) {
-        LOGI("GameState tick=%u pos0=(%.3f,%.3f,%.3f) anim0=%d rotY0=%.3f flags0=%d",
-             state_.tick, state_.players[0].pos[0], state_.players[0].pos[1],
-             state_.players[0].pos[2], (int)state_.players[0].anim, state_.players[0].rotY,
-             (int)state_.players[0].flags);
-        // Verbose: log all 22 players for first packet, then first 6 per team
-        int logCount = isFirst ? 22 : 6;
-        for (int t = 0; t < 2; ++t) {
-            int base = t * 11;
-            LOGI("[ServerRAW] Team%d positions (first=%d):", t, (int)isFirst);
-            for (int i = 0; i < logCount && i < 11; ++i) {
-                const auto& p = state_.players[base + i];
-                LOGI("  P%d pos=(%.3f,%.3f,%.3f) team=%d rotY=%.3f flags=%d",
-                     base+i, p.pos[0], p.pos[1], p.pos[2], (int)p.team, p.rotY, (int)p.flags);
-            }
-        }
+
+    // Fast-path: read tick without copying the whole packet or taking the mutex.
+    // This eliminates mutex contention for the common case of duplicate/out-of-order packets.
+    uint32_t incomingTick = *reinterpret_cast<const uint32_t*>(data + offsetof(dzfoot::GameStatePacket, tick));
+    if (incomingTick <= lastAppliedTick_ && incomingTick >= lastAppliedTick_ - 10) {
+        // Silently drop duplicates and slightly out-of-order packets without logging.
+        // The -10 margin handles jitter; anything older is treated as a reset.
+        return;
     }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::memcpy(&state_, data, sizeof(dzfoot::GameStatePacket));
+
     // Sanity-check first player position to catch NaN
     if (!dzfoot::isFiniteVec3(state_.players[0].pos)) {
         LOGE("Rejected GameState with NaN in player position");
         return;
     }
 
-    if (state_.tick < lastAppliedTick_) {
-        // If the new tick is smaller than the last applied tick,
-        // it means the server has reset (new match started or server restarted).
-        // Reset our state and clear the interpolator.
-        LOGI("Server tick reset detected (new=%u, old=%u). Clearing interpolator.", state_.tick, lastAppliedTick_);
+    if (state_.tick < lastAppliedTick_ && lastAppliedTick_ - state_.tick > 10) {
+        // Server reset detected (new match or restart)
+        LOGI("Server tick reset detected (new=%u, old=%u). Clearing interpolator.", state_.tick, lastAppliedTick_.load());
         interpolator_.clear();
         lastAppliedTick_ = 0;
+        lastPacketLocalTimeMs_ = 0.0;
+        lastPacketServerTimeMs_ = 0.0f;
     }
 
     if (state_.tick <= lastAppliedTick_) {
-        LOGI("GameState tick=%u <= lastAppliedTick_=%u — skipping (duplicate/out-of-order)",
-             state_.tick, lastAppliedTick_);
-        return;
+        return; // duplicate after reset check
     }
     lastAppliedTick_ = state_.tick;
 
@@ -102,15 +67,28 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
     float serverTimeMs = state_.tick * (1000.0f / 60.0f);
     deadReckoning_.update(state_.ball, serverTimeMs);
 
+    lastPacketServerTimeMs_ = serverTimeMs;
+    lastPacketLocalTimeMs_ = getSteadyTimeMs();
+
     // Server reconciliation stub: acknowledge up to this tick
     float delta[3];
     predictor_.acknowledge(state_.tick, state_.players[0], delta);
 }
 
 dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
+    std::lock_guard<std::mutex> lock(mutex_);
     dzfoot::GameStatePacket out = state_;
     float latest = interpolator_.latestReceivedTimeMs();
     float renderTime = latest - EntityInterpolator::INTERP_DELAY_MS;
+
+    if (lastPacketLocalTimeMs_ > 0.0) {
+        double elapsedLocal = getSteadyTimeMs() - lastPacketLocalTimeMs_;
+        if (elapsedLocal > 200.0) elapsedLocal = 200.0; // limit drift in case of suspended threads
+        
+        float estServerTime = lastPacketServerTimeMs_ + static_cast<float>(elapsedLocal);
+        renderTime = estServerTime - EntityInterpolator::INTERP_DELAY_MS;
+    }
+
     if (renderTime < 0.0f) renderTime = 0.0f;
     interpolator_.interpolate(renderTime, out);
 
@@ -122,11 +100,22 @@ void GameBridge::tick(float dt) {
     // Other systems are event-driven or per-packet
 }
 
+dzfoot::GameStatePacket GameBridge::currentState() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_;
+}
+
+dzfoot::TacticalStatePacket GameBridge::tacticalState() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return tacticalState_;
+}
+
 void GameBridge::applyMatchEvent(const uint8_t* data, size_t len) {
     if (!dzfoot::validateMatchEventPacket(data, len)) {
         LOGE("Rejected invalid MatchEvent packet (len=%zu)", len);
         return;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
     dzfoot::MatchEventPacket ev;
     std::memcpy(&ev, data, sizeof(dzfoot::MatchEventPacket));
     pendingEvents_.push_back(ev);
@@ -137,6 +126,7 @@ void GameBridge::applyTacticalState(const uint8_t* data, size_t len) {
         LOGE("Rejected invalid TacticalState packet (len=%zu)", len);
         return;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
     dzfoot::TacticalStatePacket incoming;
     std::memcpy(&incoming, data, sizeof(dzfoot::TacticalStatePacket));
     if (incoming.tick <= lastTacticalTick_) {
@@ -147,6 +137,7 @@ void GameBridge::applyTacticalState(const uint8_t* data, size_t len) {
 }
 
 std::vector<dzfoot::MatchEventPacket> GameBridge::flushEvents() {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<dzfoot::MatchEventPacket> result = std::move(pendingEvents_);
     pendingEvents_.clear();
     return result;
@@ -155,6 +146,7 @@ std::vector<dzfoot::MatchEventPacket> GameBridge::flushEvents() {
 void GameBridge::setARCamera(const float* viewMatrix,
                              const float* projMatrix,
                              const float* anchorMatrix) {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::memcpy(arViewMatrix_, viewMatrix, 16 * sizeof(float));
     std::memcpy(arProjMatrix_, projMatrix, 16 * sizeof(float));
     std::memcpy(arAnchorMatrix_, anchorMatrix, 16 * sizeof(float));

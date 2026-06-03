@@ -25,6 +25,10 @@ public:
     void getViewMatrix(float* out4x4) const;
     void getProjectionMatrix(float* out4x4, float near, float far) const;
 
+    // Set the point the broadcast camera should track (scene coords).
+    // Used to pan the TV camera along the pitch following the ball.
+    void setCameraFocus(float sceneX, float sceneZ) { focusX_ = sceneX; focusZ_ = sceneZ; }
+
     ARPose getMarkerAnchorPose() const;
     bool   isMarkerTracked()    const { if (!session_) return true; return markerTracked_; }
 
@@ -47,4 +51,8 @@ private:
     int    displayWidth_      = 0;
     int    displayHeight_     = 0;
     int    displayRotation_   = 0;
+
+    // Broadcast camera focus target (scene coords), tracks the ball.
+    float  focusX_            = 0.0f;
+    float  focusZ_            = 0.0f;
 };

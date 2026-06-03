@@ -90,7 +90,8 @@ public:
                      const float* boneMatrices = nullptr, int numBones = 0,
                      const uint8_t* playerAnims = nullptr, const float* playerVels = nullptr,
                      const float* playerRotY = nullptr,
-                     const uint8_t* playerFlags = nullptr, const uint8_t* playerTeams = nullptr);
+                     const uint8_t* playerFlags = nullptr, const uint8_t* playerTeams = nullptr,
+                     const uint8_t* playerRoles = nullptr);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
 
@@ -128,5 +129,6 @@ private:
     void renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
                        const uint8_t* playerAnims, const float* playerVels,
                        const float* playerRotY,
-                       const uint8_t* playerFlags, const uint8_t* playerTeams);
+                       const uint8_t* playerFlags, const uint8_t* playerTeams,
+                       const uint8_t* playerRoles);
 };

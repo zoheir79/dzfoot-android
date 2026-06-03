@@ -30,4 +30,5 @@ private:
     float getTimeMs(const dzfoot::GameStatePacket& s) const;
     static void lerpVec3(const float* a, const float* b, float t, float* out);
     static void lerpFloat(float a, float b, float t, float& out);
+    static void lerpAngle(float a, float b, float t, float& out);
 };

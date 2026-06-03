@@ -303,7 +303,9 @@ bool PlayerRig::load(const char* filename) {
     for (size_t i = 0; i < std::min(nodes.size(), size_t(30)); ++i) {
         const auto& rn = nodes[i];
         if (!rn.name.empty() || rn.staticMeshes.size() > 0) {
-            LOGI("  Node[%zu] name='%s' bone=%d meshes=%zu", i, rn.name.c_str(), rn.boneIndex, rn.staticMeshes.size());
+            LOGI("  Node[%zu] name='%s' parent=%d bone=%d meshes=%zu bindS=(%.3f,%.3f,%.3f)",
+                 i, rn.name.c_str(), rn.parentIndex, rn.boneIndex, rn.staticMeshes.size(),
+                 rn.bindS[0], rn.bindS[1], rn.bindS[2]);
         }
     }
     return true;
@@ -434,8 +436,8 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         std::memcpy(&scratchS[i * 3], nodes[i].bindS, 3 * sizeof(float));
     }
 
-    static int animDbgCounter = 0;
-    bool animDbg = (playerIndex == 0) && (animDbgCounter++ % 120 == 0);
+    // Logging disabled: animDbg and draw logs removed to prevent logd IPC bottleneck.
+    bool animDbg = false;
 
     std::vector<float> &curT = scratchCurT, &curR = scratchCurR, &curS = scratchCurS;
     std::vector<float> &prevT = scratchPrevT, &prevR = scratchPrevR, &prevS = scratchPrevS;
@@ -488,13 +490,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             tt = sampleTime > dur ? dur : sampleTime;
         }
 
-        if (animDbg) {
-            size_t s0in = clip.samplers.empty() ? 0 : clip.samplers[0].input.size();
-            size_t s0out = clip.samplers.empty() ? 0 : clip.samplers[0].output.size();
-            LOGI("[animDbg] anims=%zu clip=%zu '%s' dur=%.2f tt=%.2f chans=%zu samps=%zu s0in=%zu s0out=%zu",
-                 animations.size(), clipIdx, clip.name.c_str(), dur, tt,
-                 clip.channels.size(), clip.samplers.size(), s0in, s0out);
-        }
+        // animDbg logging removed for performance
 
         for (const auto& ch : clip.channels) {
             if (ch.targetNode < 0 || ch.targetNode >= (int)N) continue;
@@ -506,11 +502,9 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                 if (ch.targetNode == 0) continue;
                 std::memcpy(&scratchCurT[ch.targetNode * 3], val, 3 * sizeof(float));
             } else if (ch.path == 1) { // rotation
+                if (ch.targetNode == 0 || ch.targetNode == 1) continue; // Skip root and body rotations to keep upright direction
                 std::memcpy(&scratchCurR[ch.targetNode * 4], val, 4 * sizeof(float));
-                if (animDbg && ch.targetNode == 1) {
-                    LOGI("[animDbg] node1 body rot = (%.3f, %.3f, %.3f, %.3f)",
-                         val[0], val[1], val[2], val[3]);
-                }
+                // animDbg logging removed for performance
             } else if (ch.path == 2) { // scale
                 std::memcpy(&scratchCurS[ch.targetNode * 3], val, 3 * sizeof(float));
             }
@@ -546,6 +540,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                 if (ch.targetNode == 0) continue;
                 std::memcpy(&scratchPrevT[ch.targetNode * 3], val, 3 * sizeof(float));
             } else if (ch.path == 1) {
+                if (ch.targetNode == 0 || ch.targetNode == 1) continue; // Skip root and body rotations to keep upright direction
                 std::memcpy(&scratchPrevR[ch.targetNode * 4], val, 4 * sizeof(float));
             } else if (ch.path == 2) {
                 std::memcpy(&scratchPrevS[ch.targetNode * 3], val, 3 * sizeof(float));
@@ -573,8 +568,14 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     }
 
     // 2. Compose local matrices from animated TRS and accumulate into global matrices
+    static bool parentOrderWarned = false;
     for (size_t i = 0; i < N; ++i) {
         const auto& rn = nodes[i];
+        if (!parentOrderWarned && rn.parentIndex >= 0 && rn.parentIndex >= (int32_t)i) {
+            parentOrderWarned = true;
+            LOGE("[PlayerRig] parentIndex(%d) >= nodeIndex(%zu) for '%s' — hierarchy will be wrong!",
+                 rn.parentIndex, i, rn.name.c_str());
+        }
         float localMat[16];
         composeTRS(&scratchT[i * 3], &scratchR[i * 4], &scratchS[i * 3], localMat);
 
@@ -586,33 +587,18 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             std::memcpy(gm, localMat, 16 * sizeof(float));
         }
     }
-    if (animDbg) {
-        LOGI("[animDbg] node0 T=(%.3f,%.3f,%.3f) R=(%.4f,%.4f,%.4f,%.4f) S=(%.3f,%.3f,%.3f)",
-             scratchT[0], scratchT[1], scratchT[2], scratchR[0], scratchR[1], scratchR[2], scratchR[3],
-             scratchS[0], scratchS[1], scratchS[2]);
-        LOGI("[animDbg] node0 globalMat col0=(%.4f,%.4f,%.4f) col3=(%.4f,%.4f,%.4f)",
-             scratchGlobalMats[0], scratchGlobalMats[1], scratchGlobalMats[2],
-             scratchGlobalMats[12], scratchGlobalMats[13], scratchGlobalMats[14]);
-        LOGI("[animDbg] node1 parent=%d T=(%.3f,%.3f,%.3f) R=(%.4f,%.4f,%.4f,%.4f) S=(%.3f,%.3f,%.3f)",
-             nodes[1].parentIndex,
-             scratchT[3], scratchT[4], scratchT[5], scratchR[4], scratchR[5], scratchR[6], scratchR[7],
-             scratchS[3], scratchS[4], scratchS[5]);
-        LOGI("[animDbg] node1 globalMat col0=(%.4f,%.4f,%.4f) [0]=(%.6f)",
-             scratchGlobalMats[16], scratchGlobalMats[17], scratchGlobalMats[18], scratchGlobalMats[16]);
-    }
+    // animDbg logging removed for performance
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
     float modelRot[16];
-    // After fixing quatToMat4 (column-major), rotation is applied correctly so
-    // theta_eff = modelYaw. Empirically rotY+PI gave EXACTLY opposite facing
-    // ("sens contraire"), i.e. off by PI -> the model is +Z forward, so
-    // facing(theta)=(sin,cos) and matching (dir_gf_X,dir_gf_Y)=(sin rotY,cos rotY)
-    // gives theta = rotY. Server rotY verified correct (team0 +X, team1 -X).
+    // Updated player_base.glb faces +Z at rest, so a pure rotY rotation already
+    // aligns the body with the server heading. No PI offset needed (previous GLB
+    // faced -Z and required +PI, which caused the "marche arriere" after the swap).
     const float modelYaw = rotY;
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.35f;
+    const float scaleVal = 0.16f; // realistic player size in elevated broadcast view
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -650,10 +636,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         float partWorld[16];
         Transform::mat4Mul(modelRot, &scratchGlobalMats[i * 16], partWorld);
 
-        if (animDbg && i == 1) {
-            LOGI("[draw] P%d node1 partWorld scaleX=%.2f trans=(%.2f,%.2f,%.2f)",
-                 playerIndex, partWorld[0], partWorld[12], partWorld[13], partWorld[14]);
-        }
+        // draw logging removed for performance
 
         float mvp[16];
         Transform::mat4Mul(viewProj, partWorld, mvp);
@@ -696,9 +679,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             drawCount++;
         }
     }
-    if (animDbg) {
-        LOGI("[draw] P%d total draw calls=%d", playerIndex, drawCount);
-    }
+    // draw logging removed for performance
 }
 
 static void loadFallbackSkinnedPlayer(SkinnedMesh& outMesh) {
@@ -1001,23 +982,15 @@ static float clampFloat(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static uint8_t sanitizePlayerAnim(uint8_t animId, float speed) {
-    // Only trust locomotion anims from server. Other anims (shoot, fall, etc.)
-    // are often incorrectly sent or don't match the GLB embedded clips.
-    // Server sends DRIBBLE (10) for all moving players; map to RUN for field players.
-    // GK_IDLE (13) is kept for goalkeepers.
-    if (animId == dzfoot::ANIM_DRIBBLE) return dzfoot::ANIM_RUN;
-    bool isServerLocomotion = (animId == dzfoot::ANIM_IDLE ||
-                               animId == dzfoot::ANIM_WALK ||
-                               animId == dzfoot::ANIM_RUN ||
-                               animId == dzfoot::ANIM_SPRINT ||
-                               animId == dzfoot::ANIM_GK_IDLE);
-    if (isServerLocomotion) return animId;
-
-    uint8_t locomotionAnim = dzfoot::ANIM_IDLE;
-    if (speed > 0.008f) locomotionAnim = dzfoot::ANIM_RUN;
-    else if (speed > 0.0005f) locomotionAnim = dzfoot::ANIM_WALK;
-    return locomotionAnim;
+static uint8_t sanitizePlayerAnim(uint8_t animId, float speed, uint8_t role) {
+    (void)speed;
+    // Pass through GF anim IDs directly. Clamp to valid GLB clip range (0..16).
+    if (animId >= dzfoot::ANIM_COUNT) return dzfoot::ANIM_IDLE;
+    // Non-goalkeepers should never play GK-specific animations
+    if (role != 0 && animId >= dzfoot::ANIM_GK_IDLE) {
+        return dzfoot::ANIM_IDLE;
+    }
+    return animId;
 }
 
 static bool isLoopingAnim(uint8_t animId) {
@@ -1074,6 +1047,9 @@ void ARRenderer::init() {
         scene_.nodes[pitch].local.scale[0] = 0.1f;
         scene_.nodes[pitch].local.scale[1] = 0.1f;
         scene_.nodes[pitch].local.scale[2] = 0.1f;
+        constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
+        LOGI("Player scales derived from pitch white lines (110m x 72m): scaleX=%.3f scaleZ=%.3f",
+             5.44f, 3.60f / kEnvYHalf);
     }
 
     // 2. Goals
@@ -1106,11 +1082,10 @@ void ARRenderer::init() {
         scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
         scene_.nodes[ball].local.position[1] = 0.25f;
     } else {
-        // Ball model scaled larger (exaggerated) so it is clearly visible.
-        // Ball POSITION is scaled by 0.1 separately each frame in renderScene.
-        scene_.nodes[ball].local.scale[0] = 0.3f;
-        scene_.nodes[ball].local.scale[1] = 0.3f;
-        scene_.nodes[ball].local.scale[2] = 0.3f;
+        // Ball: modest size, visible but proportional to players
+        scene_.nodes[ball].local.scale[0] = 0.8f;
+        scene_.nodes[ball].local.scale[1] = 0.8f;
+        scene_.nodes[ball].local.scale[2] = 0.8f;
     }
 
     // 4. Stadium
@@ -1197,7 +1172,8 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
                                const float* boneMatrices, int numBones,
                                const uint8_t* playerAnims, const float* playerVels,
                                const float* playerRotY,
-                               const uint8_t* playerFlags, const uint8_t* playerTeams) {
+                               const uint8_t* playerFlags, const uint8_t* playerTeams,
+                               const uint8_t* playerRoles) {
     bool tracked = ar.isMarkerTracked();
     ARPose anchorPose = ar.getMarkerAnchorPose();
 
@@ -1246,23 +1222,23 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         // GF env-coord: ball[0]=length[-1,1], ball[1]=width, ball[2]=height(m).
         int ballIdx = scene_.findNode("ball");
         if (ballIdx >= 0 && ballPosition) {
-            // Map GF env coords to 3D scene units using pitch model bbox scale
-            constexpr float kEnvYHalf = 0.4306f;
-            const float halfLen = pitchHalf_[0] * 0.1f;
-            const float scaleX  = halfLen;
-            const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+            // Map GF env coords to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
+            // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
+            constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
+            const float scaleX  = 5.44f;
+            const float scaleZ  = 3.60f / kEnvYHalf;
             const float bx = clampFloat(ballPosition[0], -1.05f, 1.05f);
             const float bw = clampFloat(ballPosition[1], -0.50f, 0.50f);
             scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
             scene_.nodes[ballIdx].local.position[1] = ballPosition[2] * 0.1f + 0.08f; // height
-            scene_.nodes[ballIdx].local.position[2] = bw * scaleZ;                    // width
+            scene_.nodes[ballIdx].local.position[2] = bw * scaleZ;                    // width (Z-axis matches server Y-axis)
         }
         
         scene_.update();
     }
 
     renderStaticObjects(vpa);
-    renderPlayers(vpa, playerPositions, numPlayers, playerAnims, playerVels, playerRotY, playerFlags, playerTeams);
+    renderPlayers(vpa, playerPositions, numPlayers, playerAnims, playerVels, playerRotY, playerFlags, playerTeams, playerRoles);
 }
 
 void ARRenderer::renderStaticObjects(const float* viewProj) {
@@ -1326,7 +1302,8 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
 void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
                                const uint8_t* playerAnims, const float* playerVels,
                                const float* playerRotY,
-                               const uint8_t* playerFlags, const uint8_t* playerTeams) {
+                               const uint8_t* playerFlags, const uint8_t* playerTeams,
+                               const uint8_t* playerRoles) {
     if (playerRig_.nodes.empty()) {
         // fallback: draw tiny cubes if rig not loaded
         static int fallbackCounter = 0;
@@ -1336,11 +1313,11 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         Shader::use(staticShader_);
         GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
         GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-        // Map GF env coords to 3D scene units using pitch model bbox scale
-        constexpr float kEnvYHalf = 0.4306f;
-        const float halfLen = pitchHalf_[0] * 0.1f;
-        const float scaleX  = halfLen;
-        const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+        // Map GF env coords to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
+        // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
+        constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
+        const float scaleX  = 5.44f;
+        const float scaleZ  = 3.60f / kEnvYHalf;
         for (int i = 0; i < numPlayers; ++i) {
             // Skip non-active players (sent off / substituted)
             uint8_t flags = playerFlags ? playerFlags[i] : 0xFF;
@@ -1349,9 +1326,9 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
             float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[i * 3 + 2];
             float localModel[16] = {
-                0.15f, 0, 0, 0,
-                0, 0.15f, 0, 0,
-                0, 0, 0.15f, 0,
+                0.4f, 0, 0, 0,
+                0, 0.4f, 0, 0,
+                0, 0, 0.4f, 0,
                 gx * scaleX, gh * 0.1f + 0.6f, gw * scaleZ, 1
             };
             float mvp[16];
@@ -1378,11 +1355,11 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
     }
 
     // GF env_coord ranges: X in [-1,1] (length), Y in [-0.43,0.43] (width)
-    // Map to 3D scene units using pitch model bbox scale
-    constexpr float kEnvYHalf = 0.4306f;
-    const float halfLen = pitchHalf_[0] * 0.1f;
-    const float scaleX  = halfLen;
-    const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+    // Map to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
+    // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
+    constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
+    const float scaleX  = 5.44f;
+    const float scaleZ  = 3.60f / kEnvYHalf;
 
     for (int i = 0; i < numPlayers; ++i) {
         // --- Exploit server flags ---
@@ -1395,19 +1372,23 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         float gh = playerPositions[i * 3 + 2];
         float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
 
-        // Heading: prefer the server-computed rotY (derived from the player's
-        // internal direction). Fall back to velocity-derived heading (length,width)
-        // only if rotY is unavailable.
-        float vx = playerVels ? playerVels[i * 3 + 0] : 0.0f;
-        float vz = playerVels ? playerVels[i * 3 + 1] : 1.0f;
-        // Server rotY = atan2(dirX, dirZ) in GF coords. Fallback must match exactly.
-        float rotY = playerRotY ? playerRotY[i] : std::atan2(vx, vz);
+        // Heading: Z-axis matches server Y-axis, so mapping is direct
+        // playerVels[i*3+0..1] = unit direction vector (from server dir[])
+        // playerVels[i*3+2]    = scalar speed (from server vel magnitude)
+        float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
+        float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
+        float rotY = playerRotY ? playerRotY[i] : std::atan2(dirX, dirY);
 
-        // Animation state for this player
+        // Animation state for this player — USE EXACTLY what GF sends, no remapping
         uint8_t rawAnim = playerAnims ? playerAnims[i] : 0;
         uint8_t desiredAnim = rawAnim;
-        float speed = std::sqrt(vx * vx + vz * vz);
-        desiredAnim = sanitizePlayerAnim(desiredAnim, speed);
+        float speed = playerVels ? playerVels[i * 3 + 2] : 0.0f;
+        uint8_t role = playerRoles ? playerRoles[i] : 0;
+        desiredAnim = sanitizePlayerAnim(desiredAnim, speed, role);
+
+        // NO remapping — GF anim is the ground truth
+        (void)flags; // flags still available if needed later
+
         if (playerAnims_[i].current != desiredAnim) {
             playerAnims_[i].play(desiredAnim);
         }
@@ -1422,8 +1403,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         float relAngleDeg = 0.0f;
         (void)relAngleDeg;
         if (kUseExternalDirAnims && !dirAnimBank_.empty()) {
-            // moveAngle must be in same space as server rotY (atan2(dirX, dirZ))
-            float moveAngle = std::atan2(vx, vz);
+            // moveAngle must be in same space as server rotY (atan2(dirX, dirY))
+            float moveAngle = std::atan2(dirX, dirY);
             float relAngle = rotY - moveAngle;
             relAngle = std::fmod(std::abs(relAngle), 2.0f * 3.14159265f);
             if (relAngle > 3.14159265f) relAngle = 2.0f * 3.14159265f - relAngle;
@@ -1457,14 +1438,13 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
             teamColor[1] = std::min(teamColor[1] + 0.15f, 1.0f);
         }
 
-        if (shouldLog) {
-            LOGI("[renderPlayers] P%d pos=(%.2f,%.2f,%.2f) rawAnim=%d anim=%d relAngle=%.1f clip=%s blend=%.2f time=%.2f vel=(%.2f,%.2f) rotY=%.2f team=%d",
-                 i, gx, gw, gh,
-                 rawAnim, playerAnims_[i].current, relAngleDeg,
-                 dirClip ? "DIR_CLIP" : "GLB_FALLBACK",
-                 playerAnims_[i].blend, playerAnims_[i].time, vx, vz, rotY,
-                 (int)(playerTeams ? playerTeams[i] : (i < 11 ? 0 : 1)));
-        }
+        // GF server normalization constants (X_FIELD_SCALE=54.4, Y_FIELD_SCALE=-83.6, Z_FIELD_SCALE=1)
+        float gfMetersX = gx * 54.4f;
+        float gfMetersY = gw * (-83.6f);
+        float gfMetersZ = gh * 1.0f;
+
+        // Logging removed to prevent ANR caused by logd saturation.
+        // (void)gfMetersX; (void)gfMetersY; (void)gfMetersZ;
 
         playerRig_.draw(viewProj, worldPos, rotY,
                         playerAnims_[i].current, playerAnims_[i].previous, playerAnims_[i].blend,
