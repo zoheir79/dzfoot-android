@@ -27,7 +27,13 @@ public:
 
     // Set the point the broadcast camera should track (scene coords).
     // Used to pan the TV camera along the pitch following the ball.
-    void setCameraFocus(float sceneX, float sceneZ) { focusX_ = sceneX; focusZ_ = sceneZ; }
+    void setCameraFocus(float sceneX, float sceneZ) {
+        focusX_ = sceneX;
+        focusZ_ = sceneZ;
+        // Smoothly interpolate camera focus with a 8% step to mimic heavy TV camera crane inertia
+        smoothFocusX_ = smoothFocusX_ * 0.92f + sceneX * 0.08f;
+        smoothFocusZ_ = smoothFocusZ_ * 0.92f + sceneZ * 0.08f;
+    }
 
     ARPose getMarkerAnchorPose() const;
     bool   isMarkerTracked()    const { if (!session_) return true; return markerTracked_; }
@@ -55,4 +61,6 @@ private:
     // Broadcast camera focus target (scene coords), tracks the ball.
     float  focusX_            = 0.0f;
     float  focusZ_            = 0.0f;
+    float  smoothFocusX_      = 0.0f;
+    float  smoothFocusZ_      = 0.0f;
 };

@@ -10,8 +10,14 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <chrono>
 
 #define LOG_TAG "ARRenderer"
+
+static inline double nowMs() {
+    auto t = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(t.time_since_epoch()).count();
+}
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
@@ -591,14 +597,13 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
     // 3. Build player world model matrix (Translation * rotY rotation * scale)
     float modelRot[16];
-    // Updated player_base.glb faces +Z at rest, so a pure rotY rotation already
-    // aligns the body with the server heading. No PI offset needed (previous GLB
-    // faced -Z and required +PI, which caused the "marche arriere" after the swap).
-    const float modelYaw = rotY;
+    // player_base.glb faces +X (to the right) at rest, so we subtract PI/2 (1.57079632f)
+    // to align the body model perfectly with the velocity/heading direction.
+    const float modelYaw = rotY - 1.57079632f;
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.16f; // realistic player size in elevated broadcast view
+    const float scaleVal = 0.10f; // consistent with environment scale (pitch/goals/ball/stadium all use 0.1)
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -783,19 +788,77 @@ in vec2 v_TexCoord;
 in vec3 v_WorldPos;
 out vec4 outColor;
 uniform vec3 u_Color;
+uniform sampler2D u_BaseTexture;
+uniform float u_UseTexture;
+
 void main() {
     vec3 N = normalize(v_Normal);
-    vec3 L1 = normalize(vec3(0.3, 1.0, 0.4));  // main sun light
-    vec3 L2 = normalize(vec3(-0.5, 0.5, -0.3)); // fill light
-    float diff1 = max(dot(N, L1), 0.0);
-    float diff2 = max(dot(N, L2), 0.0) * 0.4;
-    float amb = 0.4;
-    // Specular highlight for kit
     vec3 V = normalize(-v_WorldPos);
+
+    // Main sun + fill
+    vec3 L1 = normalize(vec3(0.3, 1.0, 0.4));
+    vec3 L2 = normalize(vec3(-0.5, 0.5, -0.3));
+    float diff1 = max(dot(N, L1), 0.0);
+    float diff2 = max(dot(N, L2), 0.0) * 0.35;
+
+    // Stadium spotlights (4 corners) — warm white floodlights
+    vec3 spotDirs[4] = vec3[](
+        normalize(vec3( 30.0, 20.0,  20.0)),
+        normalize(vec3(-30.0, 20.0,  20.0)),
+        normalize(vec3( 30.0, 20.0, -20.0)),
+        normalize(vec3(-30.0, 20.0, -20.0))
+    );
+    float spotDiff = 0.0;
+    for (int i = 0; i < 4; i++) {
+        spotDiff += max(dot(N, spotDirs[i]), 0.0) * 0.25;
+    }
+
+    // Perimeter advertising-board LED flood (panels along sidelines)
+    float ledDiff = max(dot(N, normalize(vec3( 0.8, 0.1, 0.6))), 0.0) * 0.15
+                  + max(dot(N, normalize(vec3(-0.8, 0.1, 0.6))), 0.0) * 0.15;
+
+    float amb = 0.32;
+    float light = diff1 + diff2 + spotDiff * 0.55 + ledDiff + amb;
+
+    // Specular highlight for kit
     vec3 R = reflect(-L1, N);
     float spec = pow(max(dot(V, R), 0.0), 16.0) * 0.3;
-    vec3 finalColor = u_Color * (diff1 + diff2 + amb) + vec3(spec);
-    outColor = vec4(finalColor, 1.0);
+
+    // Rim light for player edge definition
+    float rim = 1.0 - max(dot(N, V), 0.0);
+    rim = pow(rim, 3.0) * 0.25;
+
+    vec3 baseColor = u_Color;
+    if (u_UseTexture > 0.5) {
+        vec3 texColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        baseColor = texColor * u_Color;
+    }
+
+    // Volumetric spotlight dust glow (warm foggy beams in the stadium)
+    float volumeGlow = 0.0;
+    vec3 towerPositions[4] = vec3[](
+        vec3( 10.0, 3.80,  8.0), // True top-right corner floodlight pylon of stadium_test.glb
+        vec3(-10.0, 3.80,  8.0), // True top-left corner floodlight pylon of stadium_test.glb
+        vec3( 10.0, 3.80, -8.0), // True bottom-right corner floodlight pylon of stadium_test.glb
+        vec3(-10.0, 3.80, -8.0)  // True bottom-left corner floodlight pylon of stadium_test.glb
+    );
+    for (int i = 0; i < 4; i++) {
+        vec3 lightPos = towerPositions[i];
+        vec3 toFrag = v_WorldPos - lightPos;
+        float dist = length(toFrag);
+        vec3 coneDir = normalize(vec3(0.0, -0.4, 0.0) - lightPos);
+        float coneAngle = dot(normalize(toFrag), coneDir);
+        if (coneAngle > 0.82) {
+            float intensity = pow((coneAngle - 0.82) / 0.18, 2.5);
+            volumeGlow += (intensity * 0.25) / (1.0 + dist * 0.22);
+        }
+    }
+
+    vec3 finalColor = baseColor * light + vec3(spec) + vec3(rim) + vec3(volumeGlow) * vec3(1.0, 0.93, 0.82);
+
+    // Warm lens-flare bloom and light overflow on bright spots
+    vec3 bloom = max(finalColor - vec3(0.60), vec3(0.0)) * 0.45;
+    outColor = vec4(finalColor + bloom, 1.0);
 }
 )";
 
@@ -808,10 +871,12 @@ uniform mat4 u_ModelViewProj;
 out vec3 v_Normal;
 out vec2 v_TexCoord;
 out vec3 v_LocalPos;
+out vec3 v_WorldPos;
 void main() {
     v_Normal = a_Normal;
     v_TexCoord = a_TexCoord;
     v_LocalPos = a_Position;
+    v_WorldPos = a_Position * 0.10f; // Scale local positions to match scaled world space (meters)
     gl_Position = u_ModelViewProj * vec4(a_Position, 1.0);
 }
 )";
@@ -821,51 +886,28 @@ precision mediump float;
 in vec3 v_Normal;
 in vec2 v_TexCoord;
 in vec3 v_LocalPos;
+in vec3 v_WorldPos;
 out vec4 outColor;
 uniform vec3 u_Color;
 uniform int u_MaterialType; // 0=default, 1=pitch, 2=goal, 3=ball, 4=stadium
 uniform sampler2D u_BaseTexture;
+uniform sampler2D u_OverlayTexture;
 uniform float u_UseTexture; // 0.0 = color only, 1.0 = texture * color
+uniform float u_UseOverlay; // 0.0 = no overlay, 1.0 = overlay * base
 uniform vec2 u_PitchHalf;   // pitch half-extents in local space (meters)
 
+uniform float u_Time;
+
 vec3 grassPitch() {
-    vec3 baseGreen = vec3(0.18, 0.34, 0.13);
-    vec3 darkGreen = vec3(0.14, 0.28, 0.11);
-    vec3 white     = vec3(0.78, 0.76, 0.60);
+    vec3 baseGreen = vec3(0.35, 0.52, 0.26); // warm bright lawn stripe from Beta 2 v0.2
+    vec3 darkGreen = vec3(0.28, 0.44, 0.21); // rich mid green lawn stripe from Beta 2 v0.2
 
     // Normalize local position into [-1, 1] across the pitch (robust to GLB units)
     vec2 n = v_LocalPos.xz / max(u_PitchHalf, vec2(0.001));
 
-    // Mowing stripes: ~14 bands along the length, soft contrast
+    // Mowing stripes: ~12 bands along the length, parallel to center line
     float stripe = step(0.5, fract(n.x * 6.0));
-    vec3 grass = mix(baseGreen, darkGreen, stripe * 0.55);
-    float checker = step(0.5, fract(n.y * 5.0));
-    grass *= mix(0.96, 1.04, checker);
-
-    // Line thickness in normalized units
-    float tx = 0.009;
-    float tz = 0.013;
-
-    // Outer boundary (just inside the edge)
-    float sideX = step(0.96, abs(n.x)) * step(abs(n.x), 0.99);
-    float sideZ = step(0.96, abs(n.y)) * step(abs(n.y), 0.99);
-
-    // Halfway line (x = 0)
-    float halfway = step(abs(n.x), tx);
-
-    // Center circle (radius ~0.17 of half-length)
-    float d = length(vec2(n.x, n.y * (u_PitchHalf.y / u_PitchHalf.x)));
-    float circle = step(0.16, d) * step(d, 0.16 + tx);
-    // Center spot
-    float spot = step(d, 0.018);
-
-    // Penalty boxes (both ends): box spans |x| in [0.82,1.0], |z|<0.55
-    float boxX = (step(0.82, abs(n.x)) * step(abs(n.x), 0.82 + tx)) * step(abs(n.y), 0.55);
-    float boxZin = step(abs(abs(n.y) - 0.55), tz) * step(0.82, abs(n.x));
-    float penalty = clamp(boxX + boxZin, 0.0, 1.0);
-
-    float lineMask = clamp(sideX + sideZ + halfway + circle + spot + penalty, 0.0, 1.0);
-    return mix(grass, white, lineMask);
+    return mix(baseGreen, darkGreen, stripe);
 }
 
 vec3 ballPattern() {
@@ -875,20 +917,86 @@ vec3 ballPattern() {
 }
 
 vec3 stadiumShader() {
-    // Draw horizontal tiers of seats based on height (v_LocalPos.y)
-    float tier = step(0.5, fract(v_LocalPos.y * 1.5)); // 1.5 tiers per meter
-    vec3 seatColor = vec3(0.35, 0.38, 0.42); // Gray concrete stands
+    // Height Y boundaries from stadium_test.glb:
+    //  - Y > 15.0: Tower-top floodlights (blazing emissive glow)
+    //  - 10.0 < Y <= 15.0: Roof structures and supporting trusses
+    //  - 6.6 < Y <= 10.0: Upper promenade and walkways
+    //  - 1.0 < Y <= 6.6: Seating stands (tiers of colored blocks)
+    //  - Y <= 1.0: Pitch apron and advertising boards
 
-    // Divide stands into alternating red and blue seat blocks around the stadium angle
-    float angle = atan(v_LocalPos.z, v_LocalPos.x);
-    float seatBlock = step(0.3, sin(angle * 24.0)); // 24 distinct sections
-    vec3 colorSeats = mix(vec3(0.80, 0.15, 0.15), vec3(0.15, 0.35, 0.80), step(0.0, sin(angle * 8.0)));
-
-    if (v_LocalPos.y > 1.2) {
-        return mix(seatColor, colorSeats * (0.8 + 0.2 * tier), step(0.4, fract(v_LocalPos.y * 1.5)) * seatBlock);
-    } else {
-        return vec3(0.22, 0.24, 0.26); // Asphalt pathways and surroundings
+    if (v_LocalPos.y > 15.0) {
+        // High intensity warm white floodlight glow (overflows for bloom)
+        return vec3(2.5, 2.3, 1.8);
+    } 
+    
+    if (v_LocalPos.y > 10.0) {
+        // Roof panels and steel structural trusses
+        float trussX = step(0.90, fract(v_LocalPos.x * 0.5));
+        float trussZ = step(0.90, fract(v_LocalPos.z * 0.5));
+        vec3 steelFrame = vec3(0.22, 0.25, 0.28);
+        vec3 canvasPanel = vec3(0.88, 0.88, 0.84);
+        return mix(canvasPanel, steelFrame, clamp(trussX + trussZ, 0.0, 1.0));
+    } 
+    
+    if (v_LocalPos.y > 6.6) {
+        // Promenade stairs and concrete walls
+        float steps = step(0.5, fract(v_LocalPos.y * 3.0));
+        vec3 concrete = vec3(0.42, 0.44, 0.46);
+        return concrete * mix(0.92, 1.08, steps);
+    } 
+    
+    if (v_LocalPos.y > 1.0) {
+        // Seating stands: alternate blocks of red and green (national colors)
+        float seatRow = step(0.5, fract(v_LocalPos.y * 2.4));
+        float angle = atan(v_LocalPos.z, v_LocalPos.x);
+        float seatBlock = step(0.3, sin(angle * 32.0)); // 32 spectator blocks
+        
+        // Classic red-green fan sections
+        vec3 colorSeats = mix(vec3(0.72, 0.10, 0.10), vec3(0.10, 0.52, 0.15), step(0.0, sin(angle * 12.0)));
+        vec3 concreteStairs = vec3(0.36, 0.38, 0.42);
+        return mix(concreteStairs, colorSeats * (0.82 + 0.18 * seatRow), step(0.45, fract(v_LocalPos.y * 2.4)) * seatBlock);
+    } 
+    
+    // Pitch apron and advertising panels (Y <= 1.0)
+    if (v_LocalPos.y > 0.15) {
+        float x = v_LocalPos.x;
+        float y = v_LocalPos.y;
+        float t = u_Time * 1.5; // scrolling speed
+        
+        // Split into digital screen blocks
+        float panelIndex = floor(x * 0.1);
+        float px = fract(x * 0.1);    // [0, 1] horizontally on panel
+        float py = (y - 0.15) / 0.85; // [0, 1] vertically on panel
+        
+        // High-quality LED dot-matrix grid effect
+        float ledGrid = step(0.15, fract(px * 100.0)) * step(0.15, fract(py * 16.0));
+        
+        vec3 ledColor = vec3(0.05); // background / off-state
+        
+        // Rotate through 3 different animated advertising boards
+        int adStyle = int(mod(panelIndex + floor(u_Time * 0.15), 3.0));
+        
+        if (adStyle == 0) {
+            // Gold/Orange JIGSAW HD / PDTV brand style with sliding glowing waves
+            float letters = sin(px * 12.0 + t) * sin(py * 3.14159);
+            vec3 activeColor = mix(vec3(0.9, 0.5, 0.1), vec3(0.95, 0.8, 0.1), step(0.0, letters));
+            ledColor = mix(ledColor, activeColor, step(0.1, letters) * ledGrid);
+        } else if (adStyle == 1) {
+            // Scrolling neon-blue chevron indicator boards
+            float chevron = step(0.4, fract(px * 8.0 - t));
+            ledColor = mix(ledColor, vec3(0.1, 0.7, 0.95), chevron * ledGrid);
+        } else {
+            // Mobilis / JSK Algeria green and white stripes
+            float stripes = step(0.5, fract(px * 6.0 + py * 2.0 - t * 0.5));
+            vec3 brandColor = mix(vec3(0.05, 0.55, 0.15), vec3(0.9, 0.9, 0.9), stripes);
+            ledColor = mix(ledColor, brandColor, ledGrid);
+        }
+        
+        // Emissive boost so panels glow and bloom beautifully in the stadium
+        return ledColor * 2.2;
     }
+    
+    return vec3(0.16, 0.18, 0.20); // Gravel/dark concrete ground around the pitch
 }
 
 vec4 goalShader(vec3 lightColor) {
@@ -913,14 +1021,49 @@ void main() {
     vec3 L2 = normalize(vec3(-0.5, 0.5, -0.3));
     float diff1 = max(dot(N, L1), 0.0);
     float diff2 = max(dot(N, L2), 0.0) * 0.3;
-    float amb = 0.55;
-    float light = diff1 + diff2 + amb;
-    
+
+    // Stadium spotlights (4 corners) — warm white floodlights
+    vec3 spotDirs[4] = vec3[](
+        normalize(vec3( 30.0, 20.0,  20.0)),
+        normalize(vec3(-30.0, 20.0,  20.0)),
+        normalize(vec3( 30.0, 20.0, -20.0)),
+        normalize(vec3(-30.0, 20.0, -20.0))
+    );
+    float spotDiff = 0.0;
+    for (int i = 0; i < 4; i++) {
+        spotDiff += max(dot(N, spotDirs[i]), 0.0) * 0.25;
+    }
+
+    // Perimeter advertising-board LED flood (panels along sidelines)
+    float ledDiff = max(dot(N, normalize(vec3( 0.8, 0.1, 0.6))), 0.0) * 0.05
+                  + max(dot(N, normalize(vec3(-0.8, 0.1, 0.6))), 0.0) * 0.05;
+
+    float amb = 0.40;
+    float light = diff1 * 0.40 + diff2 * 0.20 + spotDiff * 0.20 + ledDiff + amb;
+    light = clamp(light, 0.0, 1.0);
+
     vec3 baseColor;
     float alpha = 1.0;
 
     if (u_MaterialType == 1) {
-        baseColor = grassPitch();
+        vec3 grass = grassPitch();
+        if (u_UseTexture > 0.5) {
+            // High frequency tiling detail for realistic grass (using raw world coordinates for seamless alignment)
+            vec3 grassTex = texture(u_BaseTexture, v_LocalPos.xz * 0.6).rgb;
+            // Multiply texture details to preserve the sunny hues of the mowing stripes
+            grass = mix(grass, grass * grassTex * 1.4, 0.22);
+        }
+        
+        // Projects the stadium roof structural shadows perfectly on the ground!
+        if (u_UseOverlay > 0.5) {
+            // Compute a single, non-repeating UV coordinate across the entire pitch bounds
+            vec2 shadowUV = (v_LocalPos.xz / max(u_PitchHalf, vec2(0.001))) * 0.5 + vec2(0.5);
+            vec3 shadow = texture(u_OverlayTexture, shadowUV).rgb;
+            // Modulate light: shadow.r = 1.0 (lit area) gets 1.35 (sunny), shadow.r = 0.0 (shadow) gets 0.65 (visible)
+            light = mix(0.65, 1.35, shadow.r);
+        }
+        
+        baseColor = grass;
     } else if (u_MaterialType == 2) {
         vec4 g = goalShader(vec3(light));
         baseColor = g.rgb;
@@ -928,18 +1071,26 @@ void main() {
         outColor = vec4(baseColor, alpha);
         return;
     } else if (u_MaterialType == 3) {
-        baseColor = ballPattern();
+        if (u_UseTexture > 0.5) {
+            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        } else {
+            baseColor = ballPattern();
+        }
     } else if (u_MaterialType == 4) {
-        baseColor = stadiumShader();
+        vec3 base = stadiumShader();
+        if (u_UseTexture > 0.5) {
+            vec3 texColor = texture(u_BaseTexture, v_TexCoord * 8.0).rgb; // tile for concrete details
+            base = mix(base, texColor * vec3(0.9, 0.93, 0.95), 0.25);
+        }
+        baseColor = base;
     } else if (u_UseTexture > 0.5) {
-        // Player texture: sample detail texture and tint with team color
         vec3 texColor = texture(u_BaseTexture, v_TexCoord).rgb;
         baseColor = texColor * u_Color;
     } else {
         baseColor = u_Color;
     }
 
-    // Specular highlight for players to show 3D shape and limb definition
+    // Specular highlight
     float spec = 0.0;
     if (u_MaterialType == 0) {
         vec3 viewDir = normalize(-v_LocalPos);
@@ -947,7 +1098,31 @@ void main() {
         spec = pow(max(dot(N, halfVec), 0.0), 32.0) * 0.5;
     }
 
-    outColor = vec4(baseColor * light + vec3(spec), alpha);
+    // Volumetric spotlight dust glow (warm foggy beams in the stadium)
+    float volumeGlow = 0.0;
+    vec3 towerPositions[4] = vec3[](
+        vec3( 10.0, 3.80,  8.0), // True top-right corner floodlight pylon of stadium_test.glb
+        vec3(-10.0, 3.80,  8.0), // True top-left corner floodlight pylon of stadium_test.glb
+        vec3( 10.0, 3.80, -8.0), // True bottom-right corner floodlight pylon of stadium_test.glb
+        vec3(-10.0, 3.80, -8.0)  // True bottom-left corner floodlight pylon of stadium_test.glb
+    );
+    for (int i = 0; i < 4; i++) {
+        vec3 lightPos = towerPositions[i];
+        vec3 toFrag = v_WorldPos - lightPos;
+        float dist = length(toFrag);
+        vec3 coneDir = normalize(vec3(0.0, -0.4, 0.0) - lightPos);
+        float coneAngle = dot(normalize(toFrag), coneDir);
+        if (coneAngle > 0.82) {
+            float intensity = pow((coneAngle - 0.82) / 0.18, 2.5);
+            volumeGlow += (intensity * 0.25) / (1.0 + dist * 0.22);
+        }
+    }
+
+    vec3 finalColor = baseColor * light + vec3(spec) + vec3(volumeGlow) * vec3(1.0, 0.93, 0.82);
+
+    // Warm lens-flare bloom and light overflow on bright spots
+    vec3 bloom = max(finalColor - vec3(0.60), vec3(0.0)) * 0.45;
+    outColor = vec4(finalColor + bloom, alpha);
 }
 )";
 
@@ -1005,20 +1180,37 @@ static bool isLoopingAnim(uint8_t animId) {
 // ─── ARRenderer implementation ───────────────────────────────────
 
 void ARRenderer::init() {
+    double t0 = nowMs();
     cameraShader_ = Shader::compile(CAMERA_VERT, CAMERA_FRAG);
     skinnedShader_ = Shader::compile(SKINNED_VERT, SKINNED_FRAG);
     staticShader_ = Shader::compile(STATIC_VERT, STATIC_FRAG);
-    pitchTex_ = 0;
+    LOGI("[initTiming] Shaders: %.1f ms", nowMs() - t0);
+
+    t0 = nowMs();
+    pitchTex_ = loadAssetTexture("beta2/media/textures/pitch/seamlessgrass08.png");
+    if (!pitchTex_) pitchTex_ = loadAssetTexture("beta2/media/textures/pitch/pitch_01.png");
+    if (!pitchTex_) pitchTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
     ballTex_ = loadAssetTexture("beta2/media/objects/balls/ball.jpg");
+    LOGI("[initTiming] ballTex: %.1f ms", nowMs() - t0); t0 = nowMs();
     stadiumTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
+    LOGI("[initTiming] stadiumTex: %.1f ms", nowMs() - t0); t0 = nowMs();
     crowdTex_ = loadAssetTexture("beta2/media/textures/stadium/crowd01.png");
+    LOGI("[initTiming] crowdTex: %.1f ms", nowMs() - t0); t0 = nowMs();
     goalnettingTex_ = loadAssetTexture("beta2/media/textures/stadium/goalnetting.png");
+    LOGI("[initTiming] goalnettingTex: %.1f ms", nowMs() - t0); t0 = nowMs();
     pitchOverlayTex_ = loadAssetTexture("beta2/media/textures/pitch/overlay.png");
-    LOGI("Textures: ball=%u stadium=%u crowd=%u goalnetting=%u pitchOverlay=%u",
-         ballTex_, stadiumTex_, crowdTex_, goalnettingTex_, pitchOverlayTex_);
+    if (pitchOverlayTex_) {
+        glBindTexture(GL_TEXTURE_2D, pitchOverlayTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    LOGI("[initTiming] pitchOverlayTex: %.1f ms", nowMs() - t0); t0 = nowMs();
+    LOGI("Textures: pitch=%u ball=%u stadium=%u crowd=%u goalnetting=%u pitchOverlay=%u",
+         pitchTex_, ballTex_, stadiumTex_, crowdTex_, goalnettingTex_, pitchOverlayTex_);
 
     // Load compiled directional animations from asset folder
     dirAnimBank_.load(gAssetManager, "directional_anims.bin");
+    LOGI("[initTiming] directional_anims.bin: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     glGenBuffers(1, &quadVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
@@ -1028,6 +1220,7 @@ void ARRenderer::init() {
     glGenBuffers(1, &uvVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
+    LOGI("[initTiming] VBO setup: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // Build static scene graph
     int root = scene_.addNode("root", -1);
@@ -1041,16 +1234,23 @@ void ARRenderer::init() {
         scene_.nodes[pitch].local.scale[1] = 0.25f;
         scene_.nodes[pitch].local.scale[2] = 5.0f;
         scene_.nodes[pitch].local.position[1] = -0.1f;
+        // MUST update pitchHalf_ so player scales match this fallback geometry.
+        // loadCube(1.0f) makes a 1x1x1 cube; with the scales above it becomes 11 x 0.25 x 5.
+        pitchHalf_[0] = 11.0f * 0.5f;  // half length
+        pitchHalf_[1] = 5.0f  * 0.5f;  // half width
     } else {
         LOGI("Pitch half-extents (local meters): X=%.2f Z=%.2f", pitchHalf_[0], pitchHalf_[1]);
-        // Real pitch GLB is in meters (~105m x 68m), scale down to fit camera view
+        // Real pitch GLB is in meters, scale down to fit camera view
         scene_.nodes[pitch].local.scale[0] = 0.1f;
         scene_.nodes[pitch].local.scale[1] = 0.1f;
         scene_.nodes[pitch].local.scale[2] = 0.1f;
-        constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
-        LOGI("Player scales derived from pitch white lines (110m x 72m): scaleX=%.3f scaleZ=%.3f",
-             5.44f, 3.60f / kEnvYHalf);
+        constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+        const float scaleX = pitchHalf_[0] * 0.1f;
+        const float scaleZ = pitchHalf_[1] * 0.1f / kEnvYHalf;
+        LOGI("Player scales derived from actual pitch GLB: scaleX=%.3f scaleZ=%.3f",
+             scaleX, scaleZ);
     }
+    LOGI("[initTiming] pitch.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // 2. Goals
     int goalL = scene_.addNode("goalL", root);
@@ -1074,6 +1274,7 @@ void ARRenderer::init() {
         scene_.nodes[goalL].local.scale[1] = 0.1f;
         scene_.nodes[goalL].local.scale[2] = 0.1f;
     }
+    LOGI("[initTiming] goals.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // 3. Ball
     int ball = scene_.addNode("ball", root);
@@ -1082,11 +1283,13 @@ void ARRenderer::init() {
         scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
         scene_.nodes[ball].local.position[1] = 0.25f;
     } else {
-        // Ball: modest size, visible but proportional to players
-        scene_.nodes[ball].local.scale[0] = 0.8f;
-        scene_.nodes[ball].local.scale[1] = 0.8f;
-        scene_.nodes[ball].local.scale[2] = 0.8f;
+        // Ball: use same 0.1 scale as pitch so real-world proportions are preserved.
+        // ball.glb is ~22cm diameter; 0.1 keeps it visually correct vs the field.
+        scene_.nodes[ball].local.scale[0] = 0.1f;
+        scene_.nodes[ball].local.scale[1] = 0.1f;
+        scene_.nodes[ball].local.scale[2] = 0.1f;
     }
+    LOGI("[initTiming] ball.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // 4. Stadium
     int stadium = scene_.addNode("stadium", root);
@@ -1100,13 +1303,16 @@ void ARRenderer::init() {
         scene_.nodes[stadium].local.scale[2] = 0.1f;
         scene_.nodes[stadium].visible = true;
     }
+    LOGI("[initTiming] stadium_test.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // 5. Player Base rigid rig
     if (!playerRig_.load("player_base.glb")) {
         LOGE("Could not load player_base.glb rig!");
     }
+    LOGI("[initTiming] player_base.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     scene_.update();
+    LOGI("[initTiming] scene_.update: %.1f ms", nowMs() - t0);
 }
 
 void ARRenderer::destroy() {
@@ -1222,11 +1428,11 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         // GF env-coord: ball[0]=length[-1,1], ball[1]=width, ball[2]=height(m).
         int ballIdx = scene_.findNode("ball");
         if (ballIdx >= 0 && ballPosition) {
-            // Map GF env coords to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
-            // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
-            constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
-            const float scaleX  = 5.44f;
-            const float scaleZ  = 3.60f / kEnvYHalf;
+            // Map GF env coords to 3D scene units derived from the ACTUAL pitch GLB
+            // so players/ball always align with the visible white lines.
+            constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+            const float scaleX  = pitchHalf_[0] * 0.1f;
+            const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
             const float bx = clampFloat(ballPosition[0], -1.05f, 1.05f);
             const float bw = clampFloat(ballPosition[1], -0.50f, 0.50f);
             scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
@@ -1252,8 +1458,15 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
     GLint pitchHalfLoc = glGetUniformLocation(staticShader_, "u_PitchHalf");
     GLint useTexLoc = glGetUniformLocation(staticShader_, "u_UseTexture");
     GLint texLoc = glGetUniformLocation(staticShader_, "u_BaseTexture");
+    GLint useOverlayLoc = glGetUniformLocation(staticShader_, "u_UseOverlay");
+    GLint overlayTexLoc = glGetUniformLocation(staticShader_, "u_OverlayTexture");
+    GLint timeLoc = glGetUniformLocation(staticShader_, "u_Time");
     glUniform2f(pitchHalfLoc, pitchHalf_[0], pitchHalf_[1]);
     glUniform1f(useTexLoc, 0.0f);
+    glUniform1f(useOverlayLoc, 0.0f);
+    if (timeLoc >= 0) {
+        glUniform1f(timeLoc, static_cast<float>(nowMs() * 0.001));
+    }
 
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
@@ -1265,19 +1478,34 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
 
         int materialType = 0;
         GLuint boundTex = 0;
+        bool hasOverlay = false;
         if (node.name == "pitch") {
-            glUniform3f(colLoc, 0.15f, 0.45f, 0.15f);
-            materialType = 1; // procedural grass + lines
+            glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
+            materialType = 1; // pitch: beta2 texture dominant with procedural line overlay
+            boundTex = pitchTex_ ? pitchTex_ : pitchOverlayTex_;
+            
+            // Multitexturing: bind shadow overlay texture to GL_TEXTURE1
+            if (pitchOverlayTex_ && useOverlayLoc >= 0 && overlayTexLoc >= 0) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, pitchOverlayTex_);
+                glUniform1i(overlayTexLoc, 1);
+                glUniform1f(useOverlayLoc, 1.0f);
+                hasOverlay = true;
+            }
         } else if (node.name.find("goal") == 0) {
             glUniform3f(colLoc, 0.95f, 0.95f, 0.95f);
             materialType = 2;
         } else if (node.name == "ball") {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
-            materialType = ballTex_ ? 0 : 3; // procedural football pattern
+            materialType = 3; // ball uses texture (via shader) or procedural fallback
             boundTex = ballTex_;
         } else if (node.name == "stadium") {
-            glUniform3f(colLoc, 0.35f, 0.37f, 0.40f);
-            materialType = stadiumTex_ ? 0 : 4; // procedural stadium
+            if (stadiumTex_) {
+                glUniform3f(colLoc, 1.0f, 1.0f, 1.0f); // white so texture isn't tinted
+            } else {
+                glUniform3f(colLoc, 0.35f, 0.37f, 0.40f);
+            }
+            materialType = 4;
             boundTex = stadiumTex_;
         } else {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
@@ -1293,7 +1521,18 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
             glUniform1f(useTexLoc, 0.0f);
         }
 
+        if (!hasOverlay && useOverlayLoc >= 0) {
+            glUniform1f(useOverlayLoc, 0.0f);
+        }
+
         node.staticMesh.draw();
+
+        // Restore active texture slot and unbind overlay texture safely
+        if (hasOverlay) {
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        glActiveTexture(GL_TEXTURE0);
     }
 
     glDisable(GL_BLEND);
@@ -1313,11 +1552,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         Shader::use(staticShader_);
         GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
         GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-        // Map GF env coords to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
-        // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
-        constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
-        const float scaleX  = 5.44f;
-        const float scaleZ  = 3.60f / kEnvYHalf;
+        // Map GF env coords to 3D scene units derived from the ACTUAL pitch GLB.
+        constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+        const float scaleX  = pitchHalf_[0] * 0.1f;
+        const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
         for (int i = 0; i < numPlayers; ++i) {
             // Skip non-active players (sent off / substituted)
             uint8_t flags = playerFlags ? playerFlags[i] : 0xFF;
@@ -1355,11 +1593,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
     }
 
     // GF env_coord ranges: X in [-1,1] (length), Y in [-0.43,0.43] (width)
-    // Map to 3D scene units matching the ACTUAL playing field white lines (110m x 72m).
-    // At 0.1 scale, the playing lines are at X = ±5.50 and Z = ±3.60.
-    constexpr float kEnvYHalf = 0.42f; // GF touchline (Y_FIELD_SCALE=-83.6 -> ±0.42)
-    const float scaleX  = 5.44f;
-    const float scaleZ  = 3.60f / kEnvYHalf;
+    // Map to 3D scene units derived from the ACTUAL pitch GLB.
+    constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+    const float scaleX  = pitchHalf_[0] * 0.1f;
+    const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
 
     for (int i = 0; i < numPlayers; ++i) {
         // --- Exploit server flags ---

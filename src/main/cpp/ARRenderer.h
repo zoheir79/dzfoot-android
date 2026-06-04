@@ -98,6 +98,11 @@ public:
     SceneGraph& scene() { return scene_; }
     Camera& camera() { return camera_; }
 
+    // Scale factors derived from actual pitch GLB half-extents so players align
+    // with the visible field white lines regardless of pitch asset size.
+    float getPitchScaleX() const { return pitchHalf_[0] * 0.1f; }
+    float getPitchScaleZ() const { return pitchHalf_[1] * 0.1f / 0.4306f; } // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+
 private:
     GLuint cameraShader_  = 0;
     GLuint skinnedShader_ = 0; // Keeping for reference V2

@@ -14,11 +14,51 @@
 #include "AssetLoader.h"
 #include "protocol/DZFootProtocol.h"
 #include <cstring>
+#include <cstdio>
 
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_FIX_2026_06_03_0029";
+static const char* roleToString(uint8_t role) {
+    switch (role) {
+        case 0: return "GK";
+        case 1: return "CB";
+        case 2: return "LB";
+        case 3: return "RB";
+        case 4: return "DM";
+        case 5: return "CM";
+        case 6: return "LM";
+        case 7: return "RM";
+        case 8: return "AM";
+        case 9: return "CF";
+        default: return "??";
+    }
+}
+
+static const char* animToString(uint8_t anim) {
+    switch (anim) {
+        case 0: return "IDLE";
+        case 1: return "WALK";
+        case 2: return "RUN";
+        case 3: return "SPRINT";
+        case 4: return "SHOOT_R";
+        case 5: return "SHOOT_L";
+        case 6: return "PASS_S";
+        case 7: return "PASS_L";
+        case 8: return "HEADER";
+        case 9: return "TACKLE";
+        case 10: return "DRIBBLE";
+        case 11: return "FALL";
+        case 12: return "CELEBRATE";
+        case 13: return "GK_IDLE";
+        case 14: return "GK_DIVE_L";
+        case 15: return "GK_DIVE_R";
+        case 16: return "GK_CATCH";
+        default: return "???";
+    }
+}
+
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_PROFIL_2026_06_04_1104";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -140,12 +180,12 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         env->ReleaseByteArrayElements(gameStateData, state, JNI_ABORT);
     }
 
-    // Point the broadcast camera at the ball. Ball env-coord X in [-1,1] maps to
-    // scene X via scaleX = 5.44 (pitch loaded at 0.1 scale).
+    // Point the broadcast camera at the ball using the same dynamic pitch scales
+    // as the renderer so the camera tracks the ball exactly where it is drawn.
     {
         dzfoot::GameStatePacket peek = gGameBridge.getInterpolatedState();
-        const float kScaleX = 5.44f;     // matches ARRenderer scaleX
-        const float kScaleZ = 3.60f / 0.42f; // matches ARRenderer scaleZ (8.5714f)
+        const float kScaleX = gRenderer.getPitchScaleX();
+        const float kScaleZ = gRenderer.getPitchScaleZ();
         gArManager.setCameraFocus(peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ);
     }
 
@@ -224,6 +264,78 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerRoles[i] = gs.players[i].role;
     }
     float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
+
+    // Periodic diagnostic: verify client receives same positions as server logs
+    static int diagCounter = 0;
+    if ((diagCounter++ % 60) == 0) {
+        const float scaleX = gRenderer.getPitchScaleX();
+        const float scaleZ = gRenderer.getPitchScaleZ();
+
+        // Log 1: Mobile scene positions for all 22 players + ball + anim
+        LOGI("[SCENE] tick=%u ball=(%.3f,%.3f,%.3f)", gs.tick,
+             gs.ball.pos[0] * scaleX, gs.ball.pos[1] * scaleZ, gs.ball.pos[2]);
+        for (int t = 0; t < 2; ++t) {
+            char line[512];
+            int off = 0;
+            off += snprintf(line + off, sizeof(line) - off, "[SCENE] T%d ", t);
+            for (int i = 0; i < 11; ++i) {
+                int idx = t * 11 + i;
+                if (off < (int)sizeof(line) - 50) {
+                    off += snprintf(line + off, sizeof(line) - off, "P%d:(%.3f,%.3f,%s) ", idx,
+                                    gs.players[idx].pos[0] * scaleX,
+                                    gs.players[idx].pos[1] * scaleZ,
+                                    animToString(gs.players[idx].anim));
+                }
+            }
+            LOGI("%s", line);
+        }
+
+        // Log 2: Role / position conformity check
+        for (int t = 0; t < 2; ++t) {
+            float minX = 999.0f, maxX = -999.0f;
+            int minIdx = -1, maxIdx = -1;
+            int gkIdx = -1, cfIdx = -1;
+            for (int i = 0; i < 11; ++i) {
+                int idx = t * 11 + i;
+                float x = gs.players[idx].pos[0];
+                if (x < minX) { minX = x; minIdx = idx; }
+                if (x > maxX) { maxX = x; maxIdx = idx; }
+                if (gs.players[idx].role == 0) gkIdx = idx;
+                if (gs.players[idx].role == 9) cfIdx = idx;
+            }
+            // T0 plays left (goal at minX), T1 plays right (goal at maxX)
+            bool gkOK = (t == 0) ? (gkIdx == minIdx) : (gkIdx == maxIdx);
+            bool cfOK = (t == 0) ? (cfIdx == maxIdx) : (cfIdx == minIdx);
+            bool minX_OK = (t == 0) ? (minIdx == gkIdx) : (minIdx == cfIdx);
+            bool maxX_OK = (t == 0) ? (maxIdx == cfIdx) : (maxIdx == gkIdx);
+            LOGI("[CONFORM] T%d GK=%s(P%d) minX=%s(P%d) CF=%s(P%d) maxX=%s(P%d)",
+                 t, gkOK ? "OK" : "ERR", gkIdx, minX_OK ? "OK" : "ERR", minIdx,
+                 cfOK ? "OK" : "ERR", cfIdx, maxX_OK ? "OK" : "ERR", maxIdx);
+        }
+
+        // Log 3: Active player (designated) + ball confirmation
+        int activeIdx = -1;
+        for (int i = 0; i < 22; ++i) {
+            if (gs.players[i].flags & 4) { activeIdx = i; break; }
+        }
+        if (activeIdx >= 0) {
+            const auto& ap = gs.players[activeIdx];
+            LOGI("[ACTIVE] P%d team=%d role=%s pos=(%.3f,%.3f) anim=%s ball=(%.3f,%.3f)",
+                 activeIdx, ap.team, roleToString(ap.role),
+                 ap.pos[0], ap.pos[1], animToString(ap.anim),
+                 gs.ball.pos[0], gs.ball.pos[1]);
+        } else {
+            LOGI("[ACTIVE] none");
+        }
+
+        // Log 4: Keep existing GK diagnostic
+        LOGI("[JNI] scaleX=%.3f scaleZ=%.3f  GK0=(%.3f,%.3f) GK11=(%.3f,%.3f) ball=(%.3f,%.3f)",
+             scaleX, scaleZ,
+             gs.players[0].pos[0], gs.players[0].pos[1],
+             gs.players[11].pos[0], gs.players[11].pos[1],
+             gs.ball.pos[0], gs.ball.pos[1]);
+    }
+
     gRenderer.renderScene(gArManager, positions, 22, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
                           playerFlags, playerTeams, playerRoles);

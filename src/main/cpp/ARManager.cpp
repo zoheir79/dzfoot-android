@@ -205,16 +205,19 @@ void ARManager::getViewMatrix(float* out) const {
     if (camera_) {
         ArCamera_getViewMatrix(session_, camera_, out);
     } else {
-        // Fallback camera: elevated TV broadcast side view that pans with the ball.
-        // Pitch is ~12 units long (X) x ~8 units wide (Z). Camera sits well above
-        // and beyond the -Z sideline, looking down at the pitch, and slides along
-        // X with the ball (damped so the pitch edges stay framed).
-        const float panX   = focusX_ * 0.6f;   // slide along touchline (damped)
-        const float camZ   = -5.5f;            // closer to the sideline (more zoom)
-        const float camY   = 4.5f;             // lower broadcast height -> crops top stands/spotlights
-        lookAt(out, panX, camY, camZ,          // eye: above sideline, panning with ball
-                     panX, -0.3f, 1.0f,         // center: aim slightly down & into pitch (crops spotlights)
-                     0.0f, 1.0f, 0.0f);         // up: Y is up
+        // High-Vantage Broadcast Camera perfectly aligned with the original Gameplay Football view.
+        // Dynamically follows the ball on both X and Z axes to keep the ball centered.
+        const float targetX = smoothFocusX_;
+        const float targetY = 0.05f;
+        const float targetZ = smoothFocusZ_;
+        
+        const float camX = smoothFocusX_ * 0.90f; // Organic horizontal panning lag
+        const float camY = 4.5f;                  // Elevated high-vantage viewing height
+        const float camZ = smoothFocusZ_ * 0.90f - 3.2f; // Organic vertical panning lag + Z offset
+        
+        lookAt(out, camX, camY, camZ,
+                     targetX, targetY, targetZ,
+                     0.0f, 1.0f, 0.0f); // Y is up
     }
 }
 
@@ -222,9 +225,11 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
     if (camera_) {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
     } else {
-        // Simple perspective for fallback (use actual display aspect)
-        // Column-major OpenGL projection matrix
-        float fov = 28.0f * 3.14159f / 180.0f;  // standard TV broadcast FOV with zoom to hide empty stands
+        // High-Playability Tactical Broadcast Zoom: base FOV of 34.0 deg in midfield,
+        // zooming out slightly (up to 40.0 deg) near the goals.
+        // This ensures the player can see teammates for passing while keeping a gorgeous 3D view.
+        float fovDeg = 34.0f + std::min(std::abs(smoothFocusX_) * 0.75f, 6.0f);
+        float fov = fovDeg * 3.14159265f / 180.0f;
         float f = 1.0f / tanf(fov / 2.0f);
         float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
         // Column-major layout: each group of 4 floats is one COLUMN
