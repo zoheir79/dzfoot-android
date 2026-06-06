@@ -120,6 +120,70 @@ static GLuint generateProceduralTexture(int type) {
     return uploadRgbaTexture(W, H, pixels);
 }
 
+// Deterministic skin texture generator matching the 7 export avatar skin tones
+static GLuint generateSkinTexture(int skinColor) {
+    const int W = 64, H = 64;
+    uint8_t pixels[W * H * 4];
+    
+    // Define base RGB values for the 7 deterministic skin tones
+    uint8_t r = 205, g = 155, b = 115; // default olive (skinColor 3)
+    switch (skinColor) {
+        case 0: r = 245; g = 220; b = 205; break; // fair
+        case 1: r = 235; g = 195; b = 165; break; // light
+        case 2: r = 225; g = 180; b = 145; break; // medium
+        case 3: r = 205; g = 155; b = 115; break; // olive
+        case 4: r = 180; g = 130; b = 95;  break; // dark olive
+        case 5: r = 145; g = 95;  b = 65;  break; // brown
+        case 6: r = 80;  g = 50;  b = 35;  break; // black
+        default: break;
+    }
+
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            int i = (y * W + x) * 4;
+            // Add subtle procedural skin noise for realism
+            float noise = (float)(rand() % 6) - 3.0f;
+            pixels[i+0] = (uint8_t)fmax(0.0f, fmin(255.0f, r + noise));
+            pixels[i+1] = (uint8_t)fmax(0.0f, fmin(255.0f, g + noise));
+            pixels[i+2] = (uint8_t)fmax(0.0f, fmin(255.0f, b + noise));
+            pixels[i+3] = 255;
+        }
+    }
+    return uploadRgbaTexture(W, H, pixels);
+}
+
+// Deterministic hair color texture generator matching 8 export avatar hair colors
+static GLuint generateHairTexture(int hairColor) {
+    const int W = 64, H = 64;
+    uint8_t pixels[W * H * 4];
+
+    // Base RGB for 8 hair colors: black, dark_brown, brown, light_brown, blonde, red, grey, white
+    uint8_t r = 13, g = 13, b = 13; // default black (hairColor 0)
+    switch (hairColor) {
+        case 0: r = 13;  g = 13;  b = 13;  break; // black
+        case 1: r = 51;  g = 31;  b = 15;  break; // dark_brown
+        case 2: r = 89;  g = 56;  b = 31;  break; // brown
+        case 3: r = 115; g = 77;  b = 46;  break; // light_brown
+        case 4: r = 217; g = 191; b = 115; break; // blonde
+        case 5: r = 179; g = 64;  b = 38;  break; // red
+        case 6: r = 140; g = 140; b = 140; break; // grey
+        case 7: r = 230; g = 230; b = 217; break; // white
+        default: break;
+    }
+
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            int i = (y * W + x) * 4;
+            float noise = (float)(rand() % 10) - 5.0f;
+            pixels[i+0] = (uint8_t)fmax(0.0f, fmin(255.0f, r + noise));
+            pixels[i+1] = (uint8_t)fmax(0.0f, fmin(255.0f, g + noise));
+            pixels[i+2] = (uint8_t)fmax(0.0f, fmin(255.0f, b + noise));
+            pixels[i+3] = 255;
+        }
+    }
+    return uploadRgbaTexture(W, H, pixels);
+}
+
 static bool loadStaticGLB(const char* filename, Mesh& outMesh, float* outHalfXZ = nullptr) {
     if (!gAssetManager) return false;
     std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, filename);
@@ -298,6 +362,9 @@ bool PlayerRig::load(const char* filename) {
     }
     defaultSkinTex = loadAssetTexture("beta2/media/objects/players/textures/skin.jpg");
     skinTex = defaultSkinTex ? defaultSkinTex : generateProceduralTexture(0);
+    for (int s = 0; s < 7; ++s) {
+        skinTexs[s] = generateSkinTexture(s);
+    }
     kitTex = loadAssetTexture("beta2/media/objects/players/textures/kit_template.png");
     if (!kitTex) kitTex = generateProceduralTexture(1);
     shoeTex = loadAssetTexture("beta2/media/objects/players/textures/shoe.jpg");
@@ -327,6 +394,12 @@ void PlayerRig::destroy() {
     nodes.clear();
     skin = GLBSkin();
     hasSkin = false;
+    for (int s = 0; s < 7; ++s) {
+        if (skinTexs[s]) {
+            glDeleteTextures(1, &skinTexs[s]);
+            skinTexs[s] = 0;
+        }
+    }
     if (skinTex)  { glDeleteTextures(1, &skinTex);  skinTex = 0; }
     if (kitTex)   { glDeleteTextures(1, &kitTex);   kitTex = 0; }
     if (shoeTex)  { glDeleteTextures(1, &shoeTex);  shoeTex = 0; }
@@ -343,6 +416,186 @@ void PlayerRig::destroy() {
     scratchPrevR.clear(); scratchPrevR.shrink_to_fit();
     scratchPrevS.clear(); scratchPrevS.shrink_to_fit();
     scratchGlobalMats.clear(); scratchGlobalMats.shrink_to_fit();
+    // Destroy attached modular meshes
+    for (auto& part : attachedMeshes) {
+        part.mesh.destroy();
+    }
+    attachedMeshes.clear();
+    for (int s = 0; s < 8; ++s) {
+        if (hairTexs[s]) { glDeleteTextures(1, &hairTexs[s]); hairTexs[s] = 0; }
+    }
+}
+
+// ─── Modular Avatar Composition ───────────────────────────────────
+
+int PlayerRig::findNodeIndex(const char* name) const {
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].name == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool PlayerRig::loadBody(const char* bodyGlb) {
+    // Reuse existing load() logic but clear previous state first
+    destroy();
+    if (!gAssetManager) return false;
+    std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, bodyGlb);
+    if (bytes.empty()) {
+        LOGE("PlayerRig: Failed to read body asset %s", bodyGlb);
+        return false;
+    }
+    GLBLoader loader;
+    GLBScene scene;
+    if (!loader.load(bytes.data(), bytes.size(), scene)) {
+        LOGE("PlayerRig: Failed to parse body GLB %s", bodyGlb);
+        return false;
+    }
+
+    nodes.resize(scene.nodes.size());
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        const auto& gn = scene.nodes[i];
+        RigNode& rn = nodes[i];
+        rn.name = gn.name;
+        rn.parentIndex = gn.parentIndex;
+        std::memcpy(rn.localMatrix, gn.localMatrix, 16 * sizeof(float));
+        std::memcpy(rn.bindT, gn.bindT, 3 * sizeof(float));
+        std::memcpy(rn.bindR, gn.bindR, 4 * sizeof(float));
+        std::memcpy(rn.bindS, gn.bindS, 3 * sizeof(float));
+
+        extern AnimationPlayer gAnimPlayer;
+        rn.boneIndex = gAnimPlayer.findBoneIndex(rn.name);
+
+        if (gn.meshIndex >= 0 && gn.meshIndex < (int)scene.meshes.size()) {
+            const auto& mesh = scene.meshes[gn.meshIndex];
+            for (const auto& prim : mesh.primitives) {
+                if (!prim.vertices.empty()) {
+                    SkinnedMesh m;
+                    m.upload(prim.vertices, prim.indices);
+                    MeshPart mp;
+                    mp.mesh = std::move(m);
+                    mp.materialIndex = prim.materialIndex;
+                    mp.materialName = prim.materialName;
+                    if (prim.materialIndex >= 0 && prim.materialIndex < (int)scene.materials.size()) {
+                        std::memcpy(mp.baseColor, scene.materials[prim.materialIndex].baseColor, 4 * sizeof(float));
+                    }
+                    rn.staticMeshes.push_back(std::move(mp));
+                }
+            }
+        }
+    }
+    if (!scene.skins.empty()) {
+        skin = scene.skins[0];
+        hasSkin = true;
+    }
+    animations = std::move(scene.animations);
+
+    // Load shared textures (kit, shoe) — skin/hair swapped per-player at runtime
+    kitTex = loadAssetTexture("modular/textures/kit_template.png");
+    if (!kitTex) kitTex = generateProceduralTexture(1);
+    shoeTex = loadAssetTexture("modular/textures/shoe.png");
+    if (!shoeTex) shoeTex = generateProceduralTexture(2);
+    shortTex = kitTex ? kitTex : generateProceduralTexture(3);
+
+    // Pre-generate 7 skin tone textures and 8 hair color textures
+    for (int s = 0; s < 7; ++s) {
+        skinTexs[s] = generateSkinTexture(s);
+    }
+    for (int h = 0; h < 8; ++h) {
+        hairTexs[h] = generateHairTexture(h);
+    }
+
+    LOGI("PlayerRig: modular body '%s' loaded with %zu nodes, %zu anims",
+         bodyGlb, nodes.size(), animations.size());
+    return true;
+}
+
+bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
+                           const char* materialCat) {
+    if (!gAssetManager) return false;
+    std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, partGlb);
+    if (bytes.empty()) {
+        LOGI("PlayerRig: optional part %s not found, skipping", partGlb);
+        return true; // not fatal — part may be intentionally missing (bald, none)
+    }
+    GLBLoader loader;
+    GLBScene scene;
+    if (!loader.load(bytes.data(), bytes.size(), scene)) {
+        LOGE("PlayerRig: Failed to parse part GLB %s", partGlb);
+        return false;
+    }
+    if (scene.meshes.empty()) {
+        LOGI("PlayerRig: part %s has no mesh (empty), skipping", partGlb);
+        return true;
+    }
+
+    int parentIdx = findNodeIndex(parentBoneName);
+    if (parentIdx < 0) {
+        LOGE("PlayerRig: parent bone '%s' not found for part %s", parentBoneName, partGlb);
+        return false;
+    }
+
+    // Transfer all primitives from the part's meshes into attachedMeshes
+    for (const auto& mesh : scene.meshes) {
+        for (const auto& prim : mesh.primitives) {
+            if (prim.vertices.empty()) continue;
+            SkinnedMesh m;
+            m.upload(prim.vertices, prim.indices);
+            MeshPart mp;
+            mp.mesh = std::move(m);
+            mp.materialIndex = prim.materialIndex;
+            mp.materialName = materialCat; // override with client's category
+            // Copy base color if material exists
+            if (prim.materialIndex >= 0 && prim.materialIndex < (int)scene.materials.size()) {
+                std::memcpy(mp.baseColor, scene.materials[prim.materialIndex].baseColor, 4 * sizeof(float));
+            }
+            attachedMeshes.push_back(std::move(mp));
+            LOGI("PlayerRig: attached part %s mesh to '%s' (verts=%zu)",
+                 partGlb, parentBoneName, prim.vertices.size());
+        }
+    }
+    return true;
+}
+
+bool PlayerRig::loadModular(const AvatarConfig& cfg) {
+    // 1. Load body template (skeleton + mesh + animations)
+    const char* body_names[4] = {"thin", "average", "muscular", "heavy"};
+    const char* bt = body_names[cfg.bodyType % 4];
+    char bodyPath[128];
+    snprintf(bodyPath, sizeof(bodyPath), "modular/bodies/body_%s.glb", bt);
+    if (!loadBody(bodyPath)) return false;
+
+    // 2. Apply height scale on root node
+    int rootIdx = findNodeIndex("player");
+    if (rootIdx >= 0) {
+        nodes[rootIdx].bindS[1] = cfg.height;
+        // Also update the node's scale for immediate visual effect
+        float* s = nodes[rootIdx].bindS;
+        // If node already has a scale from GLB, multiply
+        // For now just set Y scale
+        // (The draw loop uses bindS to compose matrices)
+    }
+
+    // 3. Attach hair (if not bald)
+    if (cfg.hairStyle != 5) { // 5 = bald
+        const char* hair_names[6] = {"short", "long", "mohawk", "curly", "ponytail", "bald"};
+        const char* hs = hair_names[cfg.hairStyle % 6];
+        char hairPath[128];
+        snprintf(hairPath, sizeof(hairPath), "modular/parts/hair_%s.glb", hs);
+        attachPart(hairPath, "head", "hair");
+    }
+
+    // 4. Attach beard (if not none)
+    if (cfg.beardStyle != 0) { // 0 = none
+        const char* beard_names[4] = {"none", "stubble", "short", "full"};
+        const char* bs = beard_names[cfg.beardStyle % 4];
+        char beardPath[128];
+        snprintf(beardPath, sizeof(beardPath), "modular/parts/beard_%s.glb", bs);
+        attachPart(beardPath, "head", "beard");
+    }
+
+    LOGI("PlayerRig: modular avatar loaded (body=%s hair=%d beard=%d skin=%d height=%.2f)",
+         bt, cfg.hairStyle, cfg.beardStyle, cfg.skinColor, cfg.height);
+    return true;
 }
 
 // Compose a column-major TRS matrix (matches GLBLoader convention)
@@ -423,7 +676,8 @@ static bool isLoopingAnim(uint8_t animId);
 void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY,
                      uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
                      GLuint staticShader, GLuint skinnedShader, const float* teamColor,
-                     int playerIndex, const DirAnimClip* dirClip) {
+                     int playerIndex, const DirAnimClip* dirClip,
+                     const AvatarConfig* avatar) {
     if (nodes.empty()) return;
 
     (void)skinnedShader;
@@ -655,7 +909,29 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
 
             GLuint boundTex = 0;
             if (part.materialName == "skin") {
-                boundTex = skinTex;
+                if (avatar && avatar->skinColor < 7 && skinTexs[avatar->skinColor]) {
+                    boundTex = skinTexs[avatar->skinColor];
+                } else {
+                    boundTex = skinTex;
+                }
+            } else if (part.materialName == "head_skin") {
+                if (avatar && avatar->skinColor < 7 && skinTexs[avatar->skinColor]) {
+                    boundTex = skinTexs[avatar->skinColor];
+                } else {
+                    boundTex = skinTex;
+                }
+            } else if (part.materialName == "hair") {
+                if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
+                    boundTex = hairTexs[avatar->hairColor];
+                } else {
+                    boundTex = kitTex; // fallback
+                }
+            } else if (part.materialName == "beard") {
+                if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
+                    boundTex = hairTexs[avatar->hairColor];
+                } else {
+                    boundTex = kitTex; // fallback
+                }
             } else if (part.materialName == "kit_upper") {
                 boundTex = kitTex;
                 partColor[0] *= teamColor[0];
@@ -682,6 +958,42 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             glUniform3fv(colLoc, 1, partColor);
             part.mesh.draw();
             drawCount++;
+        }
+    }
+
+    // 6. Draw attached modular meshes (hair/beard) using the head bone's transform
+    if (!attachedMeshes.empty()) {
+        int headIdx = findNodeIndex("head");
+        if (headIdx >= 0) {
+            float headWorld[16];
+            Transform::mat4Mul(modelRot, &scratchGlobalMats[headIdx * 16], headWorld);
+            float headMvp[16];
+            Transform::mat4Mul(viewProj, headWorld, headMvp);
+            glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, headMvp);
+            for (const auto& part : attachedMeshes) {
+                float partColor[3] = {part.baseColor[0], part.baseColor[1], part.baseColor[2]};
+                GLuint boundTex = 0;
+                if (part.materialName == "hair") {
+                    if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
+                        boundTex = hairTexs[avatar->hairColor];
+                    }
+                } else if (part.materialName == "beard") {
+                    if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
+                        boundTex = hairTexs[avatar->hairColor];
+                    }
+                }
+                if (boundTex && texLoc >= 0 && useTexLoc >= 0) {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, boundTex);
+                    glUniform1i(texLoc, 0);
+                    glUniform1f(useTexLoc, 1.0f);
+                } else if (useTexLoc >= 0) {
+                    glUniform1f(useTexLoc, 0.0f);
+                }
+                glUniform3fv(colLoc, 1, partColor);
+                part.mesh.draw();
+                drawCount++;
+            }
         }
     }
     // draw logging removed for performance
@@ -795,12 +1107,14 @@ void main() {
     vec3 N = normalize(v_Normal);
     vec3 V = normalize(-v_WorldPos);
 
-    // Main sun + fill
-    vec3 L1 = normalize(vec3(0.3, 1.0, 0.4));
-    vec3 L2 = normalize(vec3(-0.5, 0.5, -0.3));
-    float diff1 = max(dot(N, L1), 0.0);
-    float diff2 = max(dot(N, L2), 0.0) * 0.35;
-
+    // Dominant sun light (south-west, high angle) — mimics PC's SetRandomSunParams()
+    vec3 sunDir = normalize(vec3(0.35, 0.85, 0.45));
+    float sunDiff = max(dot(N, sunDir), 0.0);
+    
+    // Cool fill from opposite side (sky bounce)
+    vec3 fillDir = normalize(vec3(-0.4, 0.3, -0.2));
+    float fillDiff = max(dot(N, fillDir), 0.0) * 0.25;
+    
     // Stadium spotlights (4 corners) — warm white floodlights
     vec3 spotDirs[4] = vec3[](
         normalize(vec3( 30.0, 20.0,  20.0)),
@@ -817,11 +1131,12 @@ void main() {
     float ledDiff = max(dot(N, normalize(vec3( 0.8, 0.1, 0.6))), 0.0) * 0.15
                   + max(dot(N, normalize(vec3(-0.8, 0.1, 0.6))), 0.0) * 0.15;
 
-    float amb = 0.32;
-    float light = diff1 + diff2 + spotDiff * 0.55 + ledDiff + amb;
+    float amb = 0.28;
+    // Sun is the main light (1.25x intensity), fill + spots complement
+    float light = sunDiff * 1.25 + fillDiff + spotDiff * 0.45 + ledDiff + amb;
 
-    // Specular highlight for kit
-    vec3 R = reflect(-L1, N);
+    // Specular highlight for kit (sun direction)
+    vec3 R = reflect(-sunDir, N);
     float spec = pow(max(dot(V, R), 0.0), 16.0) * 0.3;
 
     // Rim light for player edge definition
@@ -907,7 +1222,16 @@ vec3 grassPitch() {
 
     // Mowing stripes: ~12 bands along the length, parallel to center line
     float stripe = step(0.5, fract(n.x * 6.0));
-    return mix(baseGreen, darkGreen, stripe);
+    vec3 grass = mix(baseGreen, darkGreen, stripe);
+    
+    // Surface noise: multi-frequency sine waves to break uniformity (PC uses Perlin noise)
+    // Low freq variation + mid freq detail + high freq micro-detail
+    float noise1 = sin(v_LocalPos.x * 23.7 + v_LocalPos.z * 17.3) * 0.018;
+    float noise2 = sin(v_LocalPos.x * 47.1 - v_LocalPos.z * 31.5 + 1.3) * 0.009;
+    float noise3 = sin(v_LocalPos.x * 89.3 + v_LocalPos.z * 67.7 + 2.7) * 0.004;
+    grass += vec3(noise1 + noise2 + noise3);
+    
+    return grass;
 }
 
 vec3 ballPattern() {
@@ -1305,8 +1629,8 @@ void ARRenderer::init() {
     }
     LOGI("[initTiming] stadium_test.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
-    // 5. Player Base rigid rig
-    if (!playerRig_.load("player_base.glb")) {
+    // 5. Player Base rigid rig (preload first rig as fallback)
+    if (!playerRigs_[0].load("player_base.glb")) {
         LOGE("Could not load player_base.glb rig!");
     }
     LOGI("[initTiming] player_base.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
@@ -1331,7 +1655,7 @@ void ARRenderer::destroy() {
     if (goalnettingTex_) { glDeleteTextures(1, &goalnettingTex_); goalnettingTex_ = 0; }
     if (pitchOverlayTex_) { glDeleteTextures(1, &pitchOverlayTex_); pitchOverlayTex_ = 0; }
     dirAnimBank_.unload();
-    playerRig_.destroy();
+    for (int r = 0; r < 22; ++r) playerRigs_[r].destroy();
     for (auto& node : scene_.nodes) {
         node.skinnedMesh.destroy();
         node.staticMesh.destroy();
@@ -1543,11 +1867,16 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
                                const float* playerRotY,
                                const uint8_t* playerFlags, const uint8_t* playerTeams,
                                const uint8_t* playerRoles) {
-    if (playerRig_.nodes.empty()) {
-        // fallback: draw tiny cubes if rig not loaded
+    // Check if at least one rig is loaded
+    bool anyRigLoaded = false;
+    for (int r = 0; r < 22; ++r) {
+        if (!playerRigs_[r].nodes.empty()) { anyRigLoaded = true; break; }
+    }
+    if (!anyRigLoaded) {
+        // fallback: draw tiny cubes if no rig loaded
         static int fallbackCounter = 0;
         bool shouldLog = (fallbackCounter++ % 120 == 0);
-        if (shouldLog) LOGI("[ARRenderer::renderPlayers] PlayerRig not loaded, using cube fallback");
+        if (shouldLog) LOGI("[ARRenderer::renderPlayers] No PlayerRig loaded, using cube fallback");
 
         Shader::use(staticShader_);
         GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
@@ -1589,7 +1918,9 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
     static int playerFrameCounter = 0;
     bool shouldLog = (playerFrameCounter++ % 120 == 0);
     if (shouldLog) {
-        LOGI("[renderPlayers] Rig nodes=%zu, numPlayers=%d", playerRig_.nodes.size(), numPlayers);
+        size_t totalNodes = 0;
+        for (int r = 0; r < 22; ++r) totalNodes += playerRigs_[r].nodes.size();
+        LOGI("[renderPlayers] Total rig nodes=%zu, numPlayers=%d", totalNodes, numPlayers);
     }
 
     // GF env_coord ranges: X in [-1,1] (length), Y in [-0.43,0.43] (width)
@@ -1659,9 +1990,34 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         }
 
         // Team color from server (not index-based assumption)
-        bool teamA = playerTeams ? (playerTeams[i] == 0) : (i < 11);
-        // Realistic team kit colors: Team A = deep blue, Team B = deep red
-        float teamColor[3] = { teamA ? 0.05f : 0.80f, teamA ? 0.15f : 0.05f, teamA ? 0.70f : 0.05f };
+        float teamColor[3] = {0.05f, 0.15f, 0.70f}; // default team A
+        if (hasSetup_ && playerTeams) {
+            if (playerTeams[i] == 0) {
+                teamColor[0] = setup_.teamAColor1[0] / 255.0f;
+                teamColor[1] = setup_.teamAColor1[1] / 255.0f;
+                teamColor[2] = setup_.teamAColor1[2] / 255.0f;
+            } else if (playerTeams[i] == 1) {
+                teamColor[0] = setup_.teamBColor1[0] / 255.0f;
+                teamColor[1] = setup_.teamBColor1[1] / 255.0f;
+                teamColor[2] = setup_.teamBColor1[2] / 255.0f;
+            } else if (playerTeams[i] == 2) {
+                // Officials: neon yellow/green
+                teamColor[0] = 0.85f; teamColor[1] = 0.85f; teamColor[2] = 0.02f;
+            }
+        } else if (playerTeams) {
+            if (playerTeams[i] == 1) {
+                // Team B: deep red
+                teamColor[0] = 0.80f; teamColor[1] = 0.05f; teamColor[2] = 0.05f;
+            } else if (playerTeams[i] == 2) {
+                // Officials: neon yellow/green
+                teamColor[0] = 0.85f; teamColor[1] = 0.85f; teamColor[2] = 0.02f;
+            }
+        } else {
+            if (i >= 11) {
+                // Fallback team B
+                teamColor[0] = 0.80f; teamColor[1] = 0.05f; teamColor[2] = 0.05f;
+            }
+        }
 
         // bit 3 = has_possession: brighten the ball holder
         if (flags & 8) {
@@ -1683,10 +2039,39 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* playerPositio
         // Logging removed to prevent ANR caused by logd saturation.
         // (void)gfMetersX; (void)gfMetersY; (void)gfMetersZ;
 
-        playerRig_.draw(viewProj, worldPos, rotY,
-                        playerAnims_[i].current, playerAnims_[i].previous, playerAnims_[i].blend,
-                        playerAnims_[i].time, playerAnims_[i].prevTime,
-                        staticShader_, skinnedShader_, teamColor, i, dirClip);
+        // Build modular avatar config from MatchSetup packet
+        AvatarConfig cfg;
+        cfg.bodyType = 1; cfg.hairStyle = 0; cfg.beardStyle = 0;
+        cfg.skinColor = 3; cfg.hairColor = 0; cfg.height = 1.0f;
+        if (hasSetup_ && i < 22) {
+            const auto& p = setup_.players[i];
+            cfg.bodyType    = (p.bodyType < 4)    ? p.bodyType    : 1;
+            cfg.hairStyle   = (p.hairStyle < 6)   ? p.hairStyle   : 0;
+            cfg.beardStyle  = (p.beardStyle < 4)  ? p.beardStyle  : 0;
+            cfg.skinColor   = (p.skinColor < 7)   ? p.skinColor   : 3;
+            cfg.hairColor   = (p.hairColor < 8)   ? p.hairColor   : 0;
+            cfg.height      = (p.height > 0.5f && p.height < 2.5f) ? p.height : 1.0f;
+        }
+
+        // Lazy-load modular avatar per player index
+        if (playerRigs_[i].nodes.empty()) {
+            if (!playerRigs_[i].loadModular(cfg)) {
+                // Fallback: copy from rig 0 if available
+                if (!playerRigs_[0].nodes.empty()) {
+                    // Can't easily copy PlayerRig (contains GPU resources), skip for now
+                    LOGI("[renderPlayers] Player %d modular load failed, will use fallback", i);
+                }
+            }
+        }
+
+        // Use player's own rig if loaded, otherwise fall back to rig 0
+        PlayerRig* rig = &playerRigs_[i];
+        if (rig->nodes.empty()) rig = &playerRigs_[0];
+
+        rig->draw(viewProj, worldPos, rotY,
+                  playerAnims_[i].current, playerAnims_[i].previous, playerAnims_[i].blend,
+                  playerAnims_[i].time, playerAnims_[i].prevTime,
+                  staticShader_, skinnedShader_, teamColor, i, dirClip, &cfg);
     }
 }
  

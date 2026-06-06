@@ -5,6 +5,11 @@
 #include <GLES2/gl2ext.h>
 #include <android/asset_manager.h>
 
+enum class CameraMode {
+    AR,       // ARCore camera (device position)
+    Classic   // Broadcast TV camera (follows ball + active player)
+};
+
 struct ARPose {
     float matrix[16];
     bool  valid;
@@ -27,13 +32,19 @@ public:
 
     // Set the point the broadcast camera should track (scene coords).
     // Used to pan the TV camera along the pitch following the ball.
-    void setCameraFocus(float sceneX, float sceneZ) {
+    void setCameraFocus(float sceneX, float sceneZ, float playerBiasX = 0.0f, float playerBiasZ = 0.0f, float ballSpeed = 0.0f) {
         focusX_ = sceneX;
         focusZ_ = sceneZ;
+        playerBiasX_ = playerBiasX;
+        playerBiasZ_ = playerBiasZ;
+        ballSpeed_ = ballSpeed;
         // Smoothly interpolate camera focus with a 8% step to mimic heavy TV camera crane inertia
         smoothFocusX_ = smoothFocusX_ * 0.92f + sceneX * 0.08f;
         smoothFocusZ_ = smoothFocusZ_ * 0.92f + sceneZ * 0.08f;
     }
+
+    void setCameraMode(CameraMode mode) { camMode_ = mode; }
+    CameraMode getCameraMode() const { return camMode_; }
 
     ARPose getMarkerAnchorPose() const;
     bool   isMarkerTracked()    const { if (!session_) return true; return markerTracked_; }
@@ -63,4 +74,16 @@ private:
     float  focusZ_            = 0.0f;
     float  smoothFocusX_      = 0.0f;
     float  smoothFocusZ_      = 0.0f;
+
+    // Player-biased tracking (0..1 weight for player vs ball)
+    float  playerBiasX_       = 0.0f;
+    float  playerBiasZ_       = 0.0f;
+    float  ballSpeed_         = 0.0f;
+
+    CameraMode camMode_ = CameraMode::Classic;
+
+    // Camera shudder state (tremblement organique)
+    mutable float shudderAccumX_ = 0.0f;
+    mutable float shudderAccumY_ = 0.0f;
+    mutable int   shudderSeed_   = 0;
 };

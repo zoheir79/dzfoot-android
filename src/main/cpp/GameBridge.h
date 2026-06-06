@@ -14,10 +14,13 @@ public:
     void applyGameState(const uint8_t* data, size_t len);
     void applyMatchEvent(const uint8_t* data, size_t len);
     void applyTacticalState(const uint8_t* data, size_t len);
+    void applyMatchSetup(const uint8_t* data, size_t len);
 
     // Raw server state (for prediction/reconciliation)
     dzfoot::GameStatePacket currentState() const;
     dzfoot::TacticalStatePacket tacticalState() const;
+    bool hasMatchSetup() const { return hasSetup_; }
+    dzfoot::MatchSetupPacket matchSetup() const;
 
     // Interpolated state for rendering (smooth 20 Hz)
     dzfoot::GameStatePacket getInterpolatedState();
@@ -37,6 +40,8 @@ public:
 private:
     dzfoot::GameStatePacket state_;
     dzfoot::TacticalStatePacket tacticalState_;
+    dzfoot::MatchSetupPacket setupPacket_;
+    bool hasSetup_ = false;
     std::atomic<uint32_t> lastAppliedTick_ = 0;
     uint32_t lastTacticalTick_ = 0;
     std::vector<dzfoot::MatchEventPacket> pendingEvents_;

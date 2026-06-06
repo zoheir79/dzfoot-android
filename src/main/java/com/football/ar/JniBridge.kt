@@ -19,6 +19,7 @@ class JniBridge {
     external fun nativeOnGameStateReceived(data: ByteArray)
     external fun nativeOnGameEvent(data: ByteArray)
     external fun nativeOnTacticalState(data: ByteArray)
+    external fun nativeOnMatchSetup(data: ByteArray)
     external fun nativeInit(context: Context, assetManager: AssetManager, isEmulator: Boolean): Boolean
     external fun nativeGetBuildMarker(): String
     external fun nativeDestroy()

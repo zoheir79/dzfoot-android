@@ -28,6 +28,15 @@ struct RigNode {
     std::vector<MeshPart> staticMeshes;
 };
 
+struct AvatarConfig {
+    uint8_t bodyType = 1;     // 0=thin, 1=average, 2=muscular, 3=heavy
+    uint8_t hairStyle = 0;    // 0=short, 1=long, 2=mohawk, 3=curly, 4=ponytail, 5=bald
+    uint8_t beardStyle = 0;   // 0=none, 1=stubble, 2=short, 3=full
+    uint8_t skinColor = 3;    // 0..6 (7 tones)
+    uint8_t hairColor = 0;    // 0..7 (8 colors)
+    float   height = 1.0f;
+};
+
 class PlayerRig {
 public:
     std::vector<RigNode> nodes;
@@ -35,10 +44,15 @@ public:
     GLBSkin skin;
     bool hasSkin = false;
     GLuint skinTex = 0;
+    GLuint skinTexs[7] = {};
+    GLuint hairTexs[8] = {};   // runtime-swapped hair color textures
     GLuint kitTex = 0;
     GLuint shoeTex = 0;
     GLuint shortTex = 0;
     GLuint defaultSkinTex = 0;
+
+    // Modular attachments (hair/beard meshes parented to head node)
+    std::vector<MeshPart> attachedMeshes;
 
     // Persistent scratch buffers (resized once) to eliminate per-frame allocations
     std::vector<float> scratchT, scratchR, scratchS;
@@ -47,11 +61,19 @@ public:
     std::vector<float> scratchGlobalMats;
 
     bool load(const char* filename);
+    // Modular composition: body + hair + beard loaded separately
+    bool loadModular(const AvatarConfig& cfg);
+    bool attachPart(const char* partGlb, const char* parentBoneName, const char* materialCat);
     void draw(const float* viewProj, const float* playerWorld, float rotY,
               uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
               GLuint staticShader, GLuint skinnedShader, const float* teamColor,
-              int playerIndex = -1, const DirAnimClip* dirClip = nullptr);
+              int playerIndex = -1, const DirAnimClip* dirClip = nullptr,
+              const AvatarConfig* avatar = nullptr);
     void destroy();
+
+private:
+    int findNodeIndex(const char* name) const;
+    bool loadBody(const char* bodyGlb);
 };
 
 struct PlayerAnimState {
@@ -94,6 +116,10 @@ public:
                      const uint8_t* playerRoles = nullptr);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
+    void setMatchSetup(const dzfoot::MatchSetupPacket& setup) {
+        setup_ = setup;
+        hasSetup_ = true;
+    }
 
     SceneGraph& scene() { return scene_; }
     Camera& camera() { return camera_; }
@@ -112,9 +138,11 @@ private:
 
     SceneGraph scene_;
     Camera camera_;
-    PlayerRig playerRig_;
+    PlayerRig playerRigs_[22];  // one modular rig per player
     DirectionalAnimBank dirAnimBank_;
-    PlayerAnimState playerAnims_[22];
+    PlayerAnimState playerAnims_[25];
+    dzfoot::MatchSetupPacket setup_;
+    bool hasSetup_ = false;
     GLuint pitchTex_ = 0;
     GLuint ballTex_ = 0;
     GLuint stadiumTex_ = 0;

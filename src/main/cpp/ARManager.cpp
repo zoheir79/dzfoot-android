@@ -202,45 +202,65 @@ static void lookAt(float* m, float eyeX, float eyeY, float eyeZ,
 }
 
 void ARManager::getViewMatrix(float* out) const {
-    if (camera_) {
+    if (camera_ && camMode_ == CameraMode::AR) {
         ArCamera_getViewMatrix(session_, camera_, out);
-    } else {
-        // High-Vantage Broadcast Camera perfectly aligned with the original Gameplay Football view.
-        // Dynamically follows the ball on both X and Z axes to keep the ball centered.
-        const float targetX = smoothFocusX_;
-        const float targetY = 0.05f;
-        const float targetZ = smoothFocusZ_;
-        
-        const float camX = smoothFocusX_ * 0.90f; // Organic horizontal panning lag
-        const float camY = 4.5f;                  // Elevated high-vantage viewing height
-        const float camZ = smoothFocusZ_ * 0.90f - 3.2f; // Organic vertical panning lag + Z offset
-        
-        lookAt(out, camX, camY, camZ,
-                     targetX, targetY, targetZ,
-                     0.0f, 1.0f, 0.0f); // Y is up
+        return;
     }
+    // Classic Broadcast TV Camera — telephoto sideline gantry
+    // Mimics the original Gameplay Football PC camera (match.cpp UpdateIngameCamera)
+    
+    // Target = weighted blend of ball (40%) + active player (60%) for TV drama
+    const float playerBias = 0.6f;
+    const float ballWeight = 1.0f - playerBias;
+    float targetX = smoothFocusX_ * ballWeight + playerBiasX_ * playerBias;
+    float targetZ = smoothFocusZ_ * ballWeight + playerBiasZ_ * playerBias;
+    
+    // Clamp target to pitch bounds (avoid looking at empty stands)
+    const float maxW = 42.0f;  // pitch half-width * 0.84
+    const float maxH = 20.0f;  // pitch half-height * 0.60
+    if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
+    if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
+    
+    // Organic shudder (camera shake) proportional to ball speed
+    // This gives the "heavy camera crane on a windy day" feeling from the PC version
+    shudderSeed_++;
+    float shudderAmt = (ballSpeed_ * 0.8f + 6.0f) * 0.02f; // scaled from PC's random(-0.1,0.1)*...
+    float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
+    float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
+    shudderAccumX_ = shudderAccumX_ * 0.85f + noiseX * shudderAmt * 0.15f;
+    shudderAccumY_ = shudderAccumY_ * 0.85f + noiseY * shudderAmt * 0.15f;
+    
+    // Camera position: lateral TV gantry (same side as PC's sideline view)
+    // Y = 4.8m matches PC's "wide cam" height formula: 4.0 + height*10 with user height ~0.08
+    const float camY = 4.8f + shudderAccumY_;
+    const float camZ = -8.6f + shudderAccumX_; // Fixed sideline Z, slight shake
+    const float camX = targetX * 0.35f; // Gentle horizontal follow, never goes too far
+    
+    lookAt(out, camX, camY, camZ,
+                 targetX, 0.05f, targetZ,
+                 0.0f, 1.0f, 0.0f); // Y is up
 }
 
 void ARManager::getProjectionMatrix(float* out, float near, float far) const {
-    if (camera_) {
+    if (camera_ && camMode_ == CameraMode::AR) {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
-    } else {
-        // High-Playability Tactical Broadcast Zoom: base FOV of 34.0 deg in midfield,
-        // zooming out slightly (up to 40.0 deg) near the goals.
-        // This ensures the player can see teammates for passing while keeping a gorgeous 3D view.
-        float fovDeg = 34.0f + std::min(std::abs(smoothFocusX_) * 0.75f, 6.0f);
-        float fov = fovDeg * 3.14159265f / 180.0f;
-        float f = 1.0f / tanf(fov / 2.0f);
-        float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
-        // Column-major layout: each group of 4 floats is one COLUMN
-        float persp[16] = {
-            f/aspect, 0,    0,                          0,    // col 0
-            0,        f,    0,                          0,    // col 1
-            0,        0,    (far+near)/(near-far),      -1,   // col 2
-            0,        0,    (2*far*near)/(near-far),    0     // col 3
-        };
-        memcpy(out, persp, 16*sizeof(float));
+        return;
     }
+    // Telephoto Broadcast FOV: 24° in midfield → 29° near goals (PC uses 25° base)
+    // Narrow FOV makes players look larger and closer, like a real TV broadcast
+    float distFromCenter = std::abs(smoothFocusX_) / 42.0f; // normalized 0..1
+    float fovDeg = 24.0f + distFromCenter * 5.0f; // 24° → 29°
+    float fov = fovDeg * 3.14159265f / 180.0f;
+    float f = 1.0f / tanf(fov / 2.0f);
+    float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
+    // Column-major layout: each group of 4 floats is one COLUMN
+    float persp[16] = {
+        f/aspect, 0,    0,                          0,    // col 0
+        0,        f,    0,                          0,    // col 1
+        0,        0,    (far+near)/(near-far),      -1,   // col 2
+        0,        0,    (2*far*near)/(near-far),    0     // col 3
+    };
+    memcpy(out, persp, 16*sizeof(float));
 }
 
 ARPose ARManager::getMarkerAnchorPose() const {

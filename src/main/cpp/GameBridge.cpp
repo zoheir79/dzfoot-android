@@ -171,6 +171,22 @@ void GameBridge::applyTacticalState(const uint8_t* data, size_t len) {
     lastTacticalTick_ = incoming.tick;
 }
 
+void GameBridge::applyMatchSetup(const uint8_t* data, size_t len) {
+    if (!dzfoot::validateMatchSetupPacket(data, len)) {
+        LOGE("Rejected invalid MatchSetup packet (len=%zu)", len);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::memcpy(&setupPacket_, data, sizeof(dzfoot::MatchSetupPacket));
+    hasSetup_ = true;
+    LOGI("[GameBridge] MatchSetup received! Teams: %s vs %s", setupPacket_.teamAName, setupPacket_.teamBName);
+}
+
+dzfoot::MatchSetupPacket GameBridge::matchSetup() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return setupPacket_;
+}
+
 std::vector<dzfoot::MatchEventPacket> GameBridge::flushEvents() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<dzfoot::MatchEventPacket> result = std::move(pendingEvents_);

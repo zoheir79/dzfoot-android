@@ -58,7 +58,7 @@ static const char* animToString(uint8_t anim) {
     }
 }
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_PROFIL_2026_06_04_1104";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_06_0335";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -180,13 +180,31 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         env->ReleaseByteArrayElements(gameStateData, state, JNI_ABORT);
     }
 
-    // Point the broadcast camera at the ball using the same dynamic pitch scales
-    // as the renderer so the camera tracks the ball exactly where it is drawn.
+    // Point the broadcast camera at the ball+active player for TV drama
+    // Mimics GameplayFootball PC: target = ball*(1-bias) + player*bias
     {
         dzfoot::GameStatePacket peek = gGameBridge.getInterpolatedState();
         const float kScaleX = gRenderer.getPitchScaleX();
         const float kScaleZ = gRenderer.getPitchScaleZ();
-        gArManager.setCameraFocus(peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ);
+        
+        // Find active player (flag bit 2 = controlled)
+        int activeIdx = -1;
+        for (int i = 0; i < 22; ++i) {
+            if (peek.players[i].flags & 4) { activeIdx = i; break; }
+        }
+        float playerX = 0.0f, playerZ = 0.0f;
+        if (activeIdx >= 0) {
+            playerX = peek.players[activeIdx].pos[0] * kScaleX;
+            playerZ = peek.players[activeIdx].pos[1] * kScaleZ;
+        }
+        // Ball speed for camera shudder intensity
+        float ballVx = peek.ball.vel[0];
+        float ballVy = peek.ball.vel[1];
+        float ballSpeed = std::sqrt(ballVx * ballVx + ballVy * ballVy);
+        
+        gArManager.setCameraFocus(
+            peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ,
+            playerX, playerZ, ballSpeed);
     }
 
     // Get AR matrices
@@ -236,13 +254,13 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         gs.ball.pos[2] = 0.25f;
     }
 
-    float positions[66]; // 22 players * 3
-    uint8_t playerAnims[22];
-    float playerVels[66];
-    float playerRotY[22];
-    uint8_t playerFlags[22];
-    uint8_t playerTeams[22];
-    uint8_t playerRoles[22];
+    float positions[75]; // 25 entities * 3 (22 players + 3 officials)
+    uint8_t playerAnims[25];
+    float playerVels[75];
+    float playerRotY[25];
+    uint8_t playerFlags[25];
+    uint8_t playerTeams[25];
+    uint8_t playerRoles[25];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
         positions[i * 3 + 1] = gs.players[i].pos[1];
@@ -262,6 +280,23 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerFlags[i] = gs.players[i].flags;
         playerTeams[i] = gs.players[i].team;
         playerRoles[i] = gs.players[i].role;
+    }
+    // Add officials (referee + linesmen)
+    for (int i = 0; i < 3; ++i) {
+        int idx = 22 + i;
+        positions[idx * 3 + 0] = gs.officials[i].pos[0];
+        positions[idx * 3 + 1] = gs.officials[i].pos[1];
+        positions[idx * 3 + 2] = gs.officials[i].pos[2];
+        playerAnims[idx] = gs.officials[i].anim;
+        
+        playerVels[idx * 3 + 0] = gs.officials[i].dir[0];
+        playerVels[idx * 3 + 1] = gs.officials[i].dir[1];
+        playerVels[idx * 3 + 2] = 0.0f; // ignored for officials
+        
+        playerRotY[idx] = gs.officials[i].rotY;
+        playerFlags[idx] = gs.officials[i].flags;
+        playerTeams[idx] = gs.officials[i].team; // 2 = officials team
+        playerRoles[idx] = gs.officials[i].role; // 0=referee, 1=linesmanN, 2=linesmanS
     }
     float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
 
@@ -336,7 +371,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
              gs.ball.pos[0], gs.ball.pos[1]);
     }
 
-    gRenderer.renderScene(gArManager, positions, 22, ballPos,
+    gRenderer.renderScene(gArManager, positions, 25, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
                           playerFlags, playerTeams, playerRoles);
 }
@@ -409,6 +444,15 @@ Java_com_football_ar_JniBridge_nativeOnTacticalState(
     JNIEnv* env, jobject thiz, jbyteArray data) {
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     gGameBridge.applyTacticalState((const uint8_t*)bytes, env->GetArrayLength(data));
+    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_football_ar_JniBridge_nativeOnMatchSetup(
+    JNIEnv* env, jobject thiz, jbyteArray data) {
+    jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+    gGameBridge.applyMatchSetup((const uint8_t*)bytes, env->GetArrayLength(data));
+    gRenderer.setMatchSetup(gGameBridge.matchSetup());
     env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
 }
 

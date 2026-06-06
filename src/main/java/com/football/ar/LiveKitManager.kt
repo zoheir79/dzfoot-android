@@ -31,9 +31,20 @@ class LiveKitManager(private val activity: MainActivity) {
                         android.util.Log.d("LiveKitManager", "DataReceived topic=${event.topic} size=${event.data.size}")
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
+                            "setup" -> activity.jni.nativeOnMatchSetup(event.data)
                             "ev" -> {
-                                activity.jni.nativeOnGameEvent(event.data)
-                                activity.handleMatchEvent(event.data)
+                                if (event.data.size >= 8) {
+                                    val type = (event.data[6].toInt() and 0xFF) or ((event.data[7].toInt() and 0xFF) shl 8)
+                                    if (type == 3) { // PACKET_MATCH_SETUP
+                                        activity.jni.nativeOnMatchSetup(event.data)
+                                    } else {
+                                        activity.jni.nativeOnGameEvent(event.data)
+                                        activity.handleMatchEvent(event.data)
+                                    }
+                                } else {
+                                    activity.jni.nativeOnGameEvent(event.data)
+                                    activity.handleMatchEvent(event.data)
+                                }
                             }
                             "tac" -> activity.jni.nativeOnTacticalState(event.data)
                         }

@@ -144,25 +144,37 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     private fun showModeSelectionDialog() {
+        val modes = arrayOf("Réalité Augmentée (AR)", "Rendu 3D Classique", "Test IA vs IA (MCO vs MCA)")
         android.app.AlertDialog.Builder(this)
             .setTitle("Sélection du Mode de Jeu")
-            .setMessage("Choisissez votre expérience visuelle de GameplayFootball :")
+            .setItems(modes) { _, which ->
+                when (which) {
+                    0 -> {
+                        checkArCoreAndInit(forceClassic = false)
+                        createMatchAndConnect(mode = "vs_ai")
+                    }
+                    1 -> {
+                        checkArCoreAndInit(forceClassic = true)
+                        createMatchAndConnect(mode = "vs_ai")
+                    }
+                    2 -> {
+                        // Test mode: bot vs bot, MCO vs MCA, classic rendering
+                        checkArCoreAndInit(forceClassic = true)
+                        createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = true)
+                    }
+                }
+            }
             .setCancelable(false)
-            .setPositiveButton("Réalité Augmentée (AR)") { _, _ ->
-                checkArCoreAndInit(forceClassic = false)
-                createMatchAndConnect()
-            }
-            .setNegativeButton("Rendu 3D Classique") { _, _ ->
-                checkArCoreAndInit(forceClassic = true)
-                createMatchAndConnect()
-            }
             .show()
     }
 
-    private fun createMatchAndConnect() {
+    private fun createMatchAndConnect(
+        mode: String = "vs_ai",
+        forceMcoVsMca: Boolean = false
+    ) {
         Thread {
             try {
-                // 1. Fetch list of teams from catalog (real DZ Foot teams)
+                // 1. Fetch teams list and resolve IDs
                 var teamA: String? = null
                 var teamB: String? = null
                 try {
@@ -175,23 +187,42 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     if (teamsConn.responseCode == 200) {
                         val teamsResp = teamsConn.inputStream.bufferedReader().use { it.readText() }
                         val teamsArr = org.json.JSONArray(teamsResp)
-                        if (teamsArr.length() >= 2) {
-                            // Pick 2 random distinct teams
-                            val idxA = (0 until teamsArr.length()).random()
-                            var idxB = (0 until teamsArr.length()).random()
-                            while (idxB == idxA) idxB = (0 until teamsArr.length()).random()
-                            teamA = teamsArr.getJSONObject(idxA).getString("id")
-                            teamB = teamsArr.getJSONObject(idxB).getString("id")
-                            val nameA = teamsArr.getJSONObject(idxA).optString("name", "Team A")
-                            val nameB = teamsArr.getJSONObject(idxB).optString("name", "Team B")
-                            Log.i("MainActivity", "Picked teams: $nameA vs $nameB")
+                        if (forceMcoVsMca) {
+                            for (i in 0 until teamsArr.length()) {
+                                val obj = teamsArr.getJSONObject(i)
+                                val name = obj.optString("name", "").lowercase()
+                                val shortName = obj.optString("short_name", "").lowercase()
+                                if (name.contains("oranais") || shortName == "mco") {
+                                    teamA = obj.getString("id")
+                                    Log.i("MainActivity", "Found MCO: ${obj.optString("name")} id=$teamA")
+                                }
+                                if (name.contains("moulodia club d'alger") || shortName == "mca") {
+                                    teamB = obj.getString("id")
+                                    Log.i("MainActivity", "Found MCA: ${obj.optString("name")} id=$teamB")
+                                }
+                            }
+                            if (teamA == null || teamB == null) {
+                                Log.w("MainActivity", "MCO/MCA not found in catalog, falling back to random")
+                            }
+                        }
+                        if (teamA == null || teamB == null) {
+                            if (teamsArr.length() >= 2) {
+                                val idxA = (0 until teamsArr.length()).random()
+                                var idxB = (0 until teamsArr.length()).random()
+                                while (idxB == idxA) idxB = (0 until teamsArr.length()).random()
+                                teamA = teamsArr.getJSONObject(idxA).getString("id")
+                                teamB = teamsArr.getJSONObject(idxB).getString("id")
+                                val nameA = teamsArr.getJSONObject(idxA).optString("name", "Team A")
+                                val nameB = teamsArr.getJSONObject(idxB).optString("name", "Team B")
+                                Log.i("MainActivity", "Picked random teams: $nameA vs $nameB")
+                            }
                         }
                     }
                 } catch (e: Exception) {
                     Log.w("MainActivity", "Could not fetch DZ teams, using fallback: ${e.message}")
                 }
 
-                // 2. Create the match with selected teams (or null = generic fallback)
+                // 2. Create the match
                 val url = java.net.URL("http://102.220.31.70:8002/internal/create-match")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
@@ -200,12 +231,15 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 conn.connectTimeout = 10000
                 conn.readTimeout = 10000
 
+                val playerA = if (mode == "ai_vs_ai") "bot" else "user1"
+                val playerB = "bot"
                 val bodyBuilder = StringBuilder()
-                bodyBuilder.append("{\"player_a\":\"user1\",\"player_b\":\"bot\",\"duration\":300,\"mode\":\"vs_ai\"")
+                bodyBuilder.append("{\"player_a\":\"$playerA\",\"player_b\":\"$playerB\",\"duration\":300,\"mode\":\"$mode\""
                 if (teamA != null) bodyBuilder.append(",\"team_a\":\"$teamA\"")
                 if (teamB != null) bodyBuilder.append(",\"team_b\":\"$teamB\"")
                 bodyBuilder.append("}")
                 val body = bodyBuilder.toString()
+                Log.i("MainActivity", "Create-match body: $body")
                 conn.outputStream.use { os ->
                     os.write(body.toByteArray(Charsets.UTF_8))
                 }
@@ -219,7 +253,6 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 val response = conn.inputStream.bufferedReader().use { it.readText() }
                 val json = org.json.JSONObject(response)
                 val roomId = json.getString("room_id")
-                // Robust LiveKit URL: support https://, http://, wss://, ws:// prefixes
                 val rawLkUrl = json.getString("livekit_url")
                 val lkUrl = when {
                     rawLkUrl.startsWith("wss://") || rawLkUrl.startsWith("ws://") -> rawLkUrl
@@ -232,7 +265,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
-                    Log.i("MainActivity", "Connecting to LiveKit room: $roomId")
+                    Log.i("MainActivity", "Connecting to LiveKit room: $roomId (mode=$mode)")
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to create match: ${e.message}")
