@@ -234,7 +234,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 val playerA = if (mode == "ai_vs_ai") "bot" else "user1"
                 val playerB = "bot"
                 val bodyBuilder = StringBuilder()
-                bodyBuilder.append("{\"player_a\":\"$playerA\",\"player_b\":\"$playerB\",\"duration\":300,\"mode\":\"$mode\""
+                bodyBuilder.append("{\"player_a\":\"$playerA\",\"player_b\":\"$playerB\",\"duration\":300,\"mode\":\"$mode\"")
                 if (teamA != null) bodyBuilder.append(",\"team_a\":\"$teamA\"")
                 if (teamB != null) bodyBuilder.append(",\"team_b\":\"$teamB\"")
                 bodyBuilder.append("}")

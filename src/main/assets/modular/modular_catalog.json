@@ -1,0 +1,65 @@
+{
+  "version": "2.0",
+  "body_types": {
+    "thin": "bodies/body_thin.glb",
+    "average": "bodies/body_average.glb",
+    "muscular": "bodies/body_muscular.glb",
+    "heavy": "bodies/body_heavy.glb"
+  },
+  "hair_styles": {
+    "short": "parts/hair_short.glb",
+    "long": "parts/hair_long.glb",
+    "mohawk": "parts/hair_mohawk.glb",
+    "curly": "parts/hair_curly.glb",
+    "ponytail": "parts/hair_ponytail.glb",
+    "bald": "parts/hair_bald.glb"
+  },
+  "beard_styles": {
+    "none": "parts/beard_none.glb",
+    "stubble": "parts/beard_stubble.glb",
+    "short": "parts/beard_short.glb",
+    "full": "parts/beard_full.glb"
+  },
+  "skin_textures": {
+    "0": "textures/skin_0.png",
+    "1": "textures/skin_1.png",
+    "2": "textures/skin_2.png",
+    "3": "textures/skin_3.png",
+    "4": "textures/skin_4.png",
+    "5": "textures/skin_5.png",
+    "6": "textures/skin_6.png"
+  },
+  "hair_textures": {
+    "0": "textures/hair_0.png",
+    "1": "textures/hair_1.png",
+    "2": "textures/hair_2.png",
+    "3": "textures/hair_3.png",
+    "4": "textures/hair_4.png",
+    "5": "textures/hair_5.png",
+    "6": "textures/hair_6.png",
+    "7": "textures/hair_7.png"
+  },
+  "shared_textures": {
+    "kit_template": "textures/kit_template.png",
+    "shoe": "textures/shoe.png"
+  },
+  "skin_names": [
+    "light",
+    "medium",
+    "olive",
+    "tan",
+    "brown",
+    "dark",
+    "deep"
+  ],
+  "hair_names": [
+    "black",
+    "dark_brown",
+    "brown",
+    "light_brown",
+    "blonde",
+    "red",
+    "grey",
+    "white"
+  ]
+}

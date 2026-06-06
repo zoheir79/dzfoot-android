@@ -5,6 +5,7 @@
 #include "SceneGraph.h"
 #include "Camera.h"
 #include "DirectionalAnimBank.h"
+#include "protocol/DZFootProtocol.h"
 #include <GLES3/gl3.h>
 #include <string>
 #include <vector>

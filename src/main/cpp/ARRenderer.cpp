@@ -1278,7 +1278,15 @@ vec3 stadiumShader() {
         // Classic red-green fan sections
         vec3 colorSeats = mix(vec3(0.72, 0.10, 0.10), vec3(0.10, 0.52, 0.15), step(0.0, sin(angle * 12.0)));
         vec3 concreteStairs = vec3(0.36, 0.38, 0.42);
-        return mix(concreteStairs, colorSeats * (0.82 + 0.18 * seatRow), step(0.45, fract(v_LocalPos.y * 2.4)) * seatBlock);
+        vec3 seats = mix(concreteStairs, colorSeats * (0.82 + 0.18 * seatRow), step(0.45, fract(v_LocalPos.y * 2.4)) * seatBlock);
+        
+        // Blend crowd texture when available (crowd01.png mapped radially on stands)
+        if (u_UseTexture > 0.5) {
+            vec2 crowdUV = vec2(fract(angle * 0.15 + 0.5), fract(v_LocalPos.y * 0.15));
+            vec3 crowd = texture(u_BaseTexture, crowdUV).rgb;
+            seats = mix(seats, crowd, 0.55);
+        }
+        return seats;
     } 
     
     // Pitch apron and advertising panels (Y <= 1.0)
@@ -1824,13 +1832,17 @@ void ARRenderer::renderStaticObjects(const float* viewProj) {
             materialType = 3; // ball uses texture (via shader) or procedural fallback
             boundTex = ballTex_;
         } else if (node.name == "stadium") {
-            if (stadiumTex_) {
-                glUniform3f(colLoc, 1.0f, 1.0f, 1.0f); // white so texture isn't tinted
+            // Use crowd texture for seating area blend; fallback to stadiumTex for concrete detail
+            if (crowdTex_) {
+                glUniform3f(colLoc, 1.0f, 1.0f, 1.0f); // white so crowd texture isn't tinted
+                boundTex = crowdTex_;
+            } else if (stadiumTex_) {
+                glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
+                boundTex = stadiumTex_;
             } else {
                 glUniform3f(colLoc, 0.35f, 0.37f, 0.40f);
             }
             materialType = 4;
-            boundTex = stadiumTex_;
         } else {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
             materialType = 0;

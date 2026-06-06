@@ -58,7 +58,7 @@ static const char* animToString(uint8_t anim) {
     }
 }
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_06_0335";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_06_0405";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
