@@ -525,6 +525,19 @@ bool GLBLoader::parseGLB(const uint8_t* data, size_t len, GLBScene& outScene) {
                                         }
                                     }
                                 }
+                                // Default bone data for meshes without skinning (static/rigid parts)
+                                if (jointAcc < 0 || weightAcc < 0) {
+                                    for (int v = 0; v < count; ++v) {
+                                        prim.vertices[v].boneIndices[0] = 0;
+                                        prim.vertices[v].boneIndices[1] = 0;
+                                        prim.vertices[v].boneIndices[2] = 0;
+                                        prim.vertices[v].boneIndices[3] = 0;
+                                        prim.vertices[v].boneWeights[0] = 1.0f;
+                                        prim.vertices[v].boneWeights[1] = 0.0f;
+                                        prim.vertices[v].boneWeights[2] = 0.0f;
+                                        prim.vertices[v].boneWeights[3] = 0.0f;
+                                    }
+                                }
                             }
 
                             // Read indices

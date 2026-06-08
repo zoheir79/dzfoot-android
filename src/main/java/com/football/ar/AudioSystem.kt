@@ -1,6 +1,5 @@
 package com.football.ar
 
-import android.content.res.AssetManager
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.util.Log
@@ -62,6 +61,13 @@ class AudioSystem {
             soundPool?.stop(currentLoopId)
             currentLoopId = 0
             currentLoopName = ""
+        }
+    }
+
+    fun setLoopVolume(vol: Float) {
+        volume = vol.coerceIn(0f, 1f)
+        if (currentLoopId != 0 && currentLoopName.isNotEmpty()) {
+            soundPool?.setVolume(currentLoopId, volume, volume)
         }
     }
 

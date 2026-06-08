@@ -22,7 +22,7 @@ add_library(football_ar SHARED
     AudioManager.cpp
     AssetLoader.cpp
     AnimationPlayer.cpp
-    InputManager.cpp
+    TouchController.cpp
     GLBLoader.cpp
     SceneGraph.cpp
     Camera.cpp

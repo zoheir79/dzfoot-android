@@ -38,9 +38,9 @@ public:
         playerBiasX_ = playerBiasX;
         playerBiasZ_ = playerBiasZ;
         ballSpeed_ = ballSpeed;
-        // Smoothly interpolate camera focus with a 8% step to mimic heavy TV camera crane inertia
-        smoothFocusX_ = smoothFocusX_ * 0.92f + sceneX * 0.08f;
-        smoothFocusZ_ = smoothFocusZ_ * 0.92f + sceneZ * 0.08f;
+        // Smoothly interpolate camera focus with a 15% step for responsive ball tracking
+        smoothFocusX_ = smoothFocusX_ * 0.85f + sceneX * 0.15f;
+        smoothFocusZ_ = smoothFocusZ_ * 0.85f + sceneZ * 0.15f;
     }
 
     void setCameraMode(CameraMode mode) { camMode_ = mode; }

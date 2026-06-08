@@ -9,7 +9,7 @@
 #include "ARManager.h"
 #include "ARRenderer.h"
 #include "GameBridge.h"
-#include "InputManager.h"
+#include "TouchController.h"
 #include "AnimationPlayer.h"
 #include "AssetLoader.h"
 #include "protocol/DZFootProtocol.h"
@@ -18,6 +18,8 @@
 
 #define LOG_TAG "DZFootJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static const char* roleToString(uint8_t role) {
     switch (role) {
@@ -58,7 +60,7 @@ static const char* animToString(uint8_t anim) {
     }
 }
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_06_0405";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_07_0010";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -66,11 +68,12 @@ extern bool runProtocolTests();
 static ARManager gArManager;
 static ARRenderer gRenderer;
 static GameBridge gGameBridge;
-static InputManager gInputManager;
+static TouchController gTouchController;
 AnimationPlayer gAnimPlayer;
 AAssetManager* gAssetManager = nullptr;
 static bool gRendererInited = false;
 static bool gAnimLoaded = false;
+static int gScreenW = 1080, gScreenH = 1920;
 jobject gActivityObj = nullptr;
 JavaVM* gJavaVM = nullptr;
 
@@ -149,6 +152,8 @@ JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeDisplayChanged(
     JNIEnv* env, jobject thiz, jint rotation, jint width, jint height) {
     gArManager.onDisplayGeometryChanged(rotation, width, height);
+    gScreenW = width; gScreenH = height;
+    gTouchController.setScreenSize(width, height);
     glViewport(0, 0, width, height);
     LOGI("Viewport set: %dx%d rotation=%d", width, height, rotation);
 }
@@ -230,9 +235,15 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     // Use interpolated state for smooth 20 Hz display
     dzfoot::GameStatePacket gs = gGameBridge.getInterpolatedState();
 
-    // If no remote game state, apply local input (offline mode)
+    // If no remote game state, apply local input + offline AI vs AI simulation
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
-        const dzfoot::PlayerInputPacket& input = gInputManager.getInput();
+        static int offlineWarnCounter = 0;
+        if ((offlineWarnCounter++ % 120) == 0) {
+            LOGW("[jni_main] No remote game state (offline mode). "
+                 "Ensure GF server is running and Session backend is relaying. "
+                 "gsLen=%d", gameStateData ? env->GetArrayLength(gameStateData) : -1);
+        }
+        const dzfoot::PlayerInputPacket& input = gTouchController.getInput();
         float speed = 0.05f;
         gs.players[0].pos[0] += input.dirX * speed;
         gs.players[0].pos[1] += input.dirZ * speed;
@@ -246,12 +257,106 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
             gs.players[0].anim = dzfoot::ANIM_IDLE;
         }
         if (gs.players[0].pos[0] < -1.0f) gs.players[0].pos[0] = -1.0f;
-        if (gs.players[0].pos[0] > 1.0f) gs.players[0].pos[0] = 1.0f;
+        if (gs.players[0].pos[0] >  1.0f) gs.players[0].pos[0] = 1.0f;
         if (gs.players[0].pos[1] < -0.43f) gs.players[0].pos[1] = -0.43f;
-        if (gs.players[0].pos[1] > 0.43f) gs.players[0].pos[1] = 0.43f;
-        gs.ball.pos[0] = gs.players[0].pos[0] + 0.15f;
-        gs.ball.pos[1] = gs.players[0].pos[1];
+        if (gs.players[0].pos[1] >  0.43f) gs.players[0].pos[1] = 0.43f;
+
+        // Ensure player 0 is active + designated so camera follows and renderer shows them
+        gs.players[0].flags |= 0x05; // bit0=is_active, bit2=designated
+        // Activate all other players so they render too
+        for (int i = 1; i < 22; ++i) gs.players[i].flags |= 0x01;
+        for (int i = 0; i < 3; ++i)  gs.officials[i].flags |= 0x01;
+
+        // Formation tables (static for reuse in AI sim)
+        static const float t0x[11] = {-0.90f,-0.70f,-0.70f,-0.70f,-0.70f,
+                                -0.40f,-0.40f,-0.40f,-0.40f,
+                                -0.10f,-0.10f};
+        static const float t0y[11] = { 0.00f, 0.30f,-0.30f, 0.10f,-0.10f,
+                                 0.35f,-0.35f, 0.12f,-0.12f,
+                                 0.20f,-0.20f};
+        static const float t1x[11] = { 0.90f, 0.70f, 0.70f, 0.70f, 0.70f,
+                                 0.40f, 0.40f, 0.40f, 0.40f,
+                                 0.10f, 0.10f};
+        static const float t1y[11] = { 0.00f, 0.30f,-0.30f, 0.10f,-0.10f,
+                                 0.35f,-0.35f, 0.12f,-0.12f,
+                                 0.20f,-0.20f};
+
+        // One-time formation setup
+        for (int i = 0; i < 11; ++i) {
+            if (gs.players[i].pos[0] == 0.0f && gs.players[i].pos[1] == 0.0f) {
+                gs.players[i].pos[0] = t0x[i];
+                gs.players[i].pos[1] = t0y[i];
+                gs.players[i].team = 0;
+                gs.players[i].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
+            }
+            int j = 11 + i;
+            if (gs.players[j].pos[0] == 0.0f && gs.players[j].pos[1] == 0.0f) {
+                gs.players[j].pos[0] = t1x[i];
+                gs.players[j].pos[1] = t1y[i];
+                gs.players[j].team = 1;
+                gs.players[j].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
+            }
+        }
+        // Officials
+        gs.officials[0].pos[0] = 0.0f;  gs.officials[0].pos[1] = 0.45f; gs.officials[0].team = 2;
+        gs.officials[1].pos[0] = 0.0f;  gs.officials[1].pos[1] = -0.45f; gs.officials[1].team = 2;
+        gs.officials[2].pos[0] = 0.0f;  gs.officials[2].pos[1] = 0.0f; gs.officials[2].team = 2;
+
+        // Offline AI vs AI simulation: players patrol around formation spots
+        static float simTime = 0.0f;
+        simTime += 0.016f; // ~60 Hz
+        for (int i = 1; i < 22; ++i) {
+            int idx = (i < 11) ? i : (i - 11);
+            float baseX = (i < 11) ? t0x[idx] : t1x[idx];
+            float baseY = (i < 11) ? t0y[idx] : t1y[idx];
+
+            // Unique phase per player so they don't move in unison
+            float phase = i * 1.37f;
+            float patrolX = std::sin(simTime * 0.8f + phase) * 0.18f;
+            float patrolY = std::cos(simTime * 0.6f + phase * 0.8f) * 0.12f;
+
+            float targetX = baseX + patrolX;
+            float targetY = baseY + patrolY;
+
+            // Smooth interpolation toward target
+            float dx = targetX - gs.players[i].pos[0];
+            float dy = targetY - gs.players[i].pos[1];
+            gs.players[i].vel[0] = dx * 0.04f; // frame delta
+            gs.players[i].vel[1] = dy * 0.04f;
+            gs.players[i].pos[0] += gs.players[i].vel[0];
+            gs.players[i].pos[1] += gs.players[i].vel[1];
+
+            // Update heading and animation based on actual speed
+            float moveSpeed = std::sqrt(gs.players[i].vel[0]*gs.players[i].vel[0] +
+                                         gs.players[i].vel[1]*gs.players[i].vel[1]);
+            if (moveSpeed > 0.003f) {
+                gs.players[i].rotY = std::atan2(gs.players[i].vel[0], gs.players[i].vel[1]);
+                gs.players[i].anim = (moveSpeed > 0.008f) ? dzfoot::ANIM_RUN : dzfoot::ANIM_WALK;
+            } else {
+                gs.players[i].anim = dzfoot::ANIM_IDLE;
+            }
+        }
+
+        // Ball gently orbits the center of the pitch
+        gs.ball.pos[0] = std::sin(simTime * 0.35f) * 0.35f;
+        gs.ball.pos[1] = std::cos(simTime * 0.25f) * 0.25f;
         gs.ball.pos[2] = 0.25f;
+    }
+
+    // Detect active player (flags bit 2 = designated/controlled) and sync with controller
+    {
+        int activeIdx = -1;
+        for (int i = 0; i < 22; ++i) {
+            if (gs.players[i].flags & 4) { activeIdx = i; break; }
+        }
+        if (activeIdx >= 0) {
+            uint8_t team = gs.players[activeIdx].team;
+            uint8_t playerIdx = static_cast<uint8_t>(activeIdx % 11);
+            gTouchController.setActivePlayer(team, playerIdx);
+        } else {
+            // Fallback: player 0 of team 0 (offline mode)
+            gTouchController.setActivePlayer(0, 0);
+        }
     }
 
     float positions[75]; // 25 entities * 3 (22 players + 3 officials)
@@ -371,20 +476,22 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
              gs.ball.pos[0], gs.ball.pos[1]);
     }
 
+    gTouchController.updateRadar(gs);
     gRenderer.renderScene(gArManager, positions, 25, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
-                          playerFlags, playerTeams, playerRoles);
+                          playerFlags, playerTeams, playerRoles,
+                          &gTouchController, gScreenW, gScreenH);
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeOnTouch(
-    JNIEnv* env, jobject thiz, jfloat x, jfloat y, jint action) {
-    if (action == 0) { // ACTION_DOWN
-        gInputManager.onTouchDown(x, y);
+    JNIEnv* env, jobject thiz, jfloat x, jfloat y, jint action, jint pointerId) {
+    if (action == 0 || action == 5) { // ACTION_DOWN or ACTION_POINTER_DOWN
+        gTouchController.onTouchDown(pointerId, x, y);
     } else if (action == 2) { // ACTION_MOVE
-        gInputManager.onTouchMove(x, y);
-    } else if (action == 1 || action == 3) { // ACTION_UP or ACTION_CANCEL
-        gInputManager.onTouchUp();
+        gTouchController.onTouchMove(pointerId, x, y);
+    } else if (action == 1 || action == 6 || action == 3) { // ACTION_UP, ACTION_POINTER_UP or ACTION_CANCEL
+        gTouchController.onTouchUp(pointerId);
     }
 }
 
@@ -392,7 +499,7 @@ JNIEXPORT jbyteArray JNICALL
 Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     constexpr size_t pktSize = sizeof(dzfoot::PlayerInputPacket);
     uint8_t buf[pktSize];
-    gInputManager.serialize(buf, pktSize);
+    gTouchController.serialize(buf, pktSize);
     jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);
     return result;
@@ -400,27 +507,27 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSetActionKick(JNIEnv* env, jobject thiz, jboolean on) {
-    gInputManager.setActionKick(on == JNI_TRUE);
+    gTouchController.setActionKick(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSetActionPass(JNIEnv* env, jobject thiz, jboolean on) {
-    gInputManager.setActionPass(on == JNI_TRUE);
+    gTouchController.setActionPass(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSetActionShot(JNIEnv* env, jobject thiz, jboolean on) {
-    gInputManager.setActionShot(on == JNI_TRUE);
+    gTouchController.setActionShot(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSetActionDribble(JNIEnv* env, jobject thiz, jboolean on) {
-    gInputManager.setActionDribble(on == JNI_TRUE);
+    gTouchController.setActionDribble(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSetSprint(JNIEnv* env, jobject thiz, jboolean on) {
-    gInputManager.setSprint(on == JNI_TRUE);
+    gTouchController.setSprint(on == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

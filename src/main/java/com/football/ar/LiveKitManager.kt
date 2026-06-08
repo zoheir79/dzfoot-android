@@ -1,6 +1,5 @@
 package com.football.ar
 
-import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,16 +49,16 @@ class LiveKitManager(private val activity: MainActivity) {
                         }
                     }
                     is RoomEvent.ParticipantConnected -> {
-                        android.util.Log.d("LiveKitManager", "ParticipantConnected: ${event.participant.sid}")
+                        android.util.Log.d("LiveKitManager", "ParticipantConnected: ${event.participant.identity} sid=${event.participant.sid}")
                     }
                     is RoomEvent.TrackSubscribed -> {
                         android.util.Log.d("LiveKitManager", "TrackSubscribed")
                     }
                     is RoomEvent.FailedToConnect -> {
-                        android.util.Log.e("LiveKitManager", "FailedToConnect: ${event.error?.message}")
+                        android.util.Log.e("LiveKitManager", "FailedToConnect: ${event.error.message}")
                     }
                     is RoomEvent.ParticipantDisconnected -> {
-                        android.util.Log.d("LiveKitManager", "ParticipantDisconnected")
+                        android.util.Log.d("LiveKitManager", "ParticipantDisconnected: ${event.participant.identity}")
                     }
                     else -> {
                         android.util.Log.d("LiveKitManager", "Event: ${event.javaClass.simpleName}")
@@ -90,10 +89,11 @@ class LiveKitManager(private val activity: MainActivity) {
         }
         scope.launch {
             try {
+                @Suppress("CheckResult")
                 r.localParticipant.publishData(
                     data = inputBytes,
                     reliability = DataPublishReliability.LOSSY,
-                    topic = "in"
+                    topic = "in",
                 )
                 android.util.Log.d("LiveKitManager", "publishData ok topic=in size=${inputBytes.size}")
             } catch (e: Exception) {

@@ -13,9 +13,10 @@ class JniBridge {
         viewMatrix: FloatArray,
         projMatrix: FloatArray,
         anchorMatrix: FloatArray,
-        gameStateData: ByteArray
+        gameStateData: ByteArray,
     )
 
+    @Suppress("unused")
     external fun nativeOnGameStateReceived(data: ByteArray)
     external fun nativeOnGameEvent(data: ByteArray)
     external fun nativeOnTacticalState(data: ByteArray)
@@ -27,7 +28,7 @@ class JniBridge {
     external fun nativePause()
     external fun nativeSurfaceCreated()
     external fun nativeDisplayChanged(rotation: Int, width: Int, height: Int)
-    external fun nativeOnTouch(x: Float, y: Float, action: Int)
+    external fun nativeOnTouch(x: Float, y: Float, action: Int, pointerId: Int)
     external fun nativeGetInputBytes(): ByteArray
     external fun nativeSetActionKick(on: Boolean)
     external fun nativeSetActionPass(on: Boolean)
@@ -35,7 +36,7 @@ class JniBridge {
     external fun nativeSetActionDribble(on: Boolean)
     external fun nativeSetSprint(on: Boolean)
 
-    // VERY explicit instance method
+    @Suppress("unused")
     fun getClassLoader(): ClassLoader {
         return JniBridge::class.java.classLoader!!
     }
@@ -55,6 +56,7 @@ class JniBridge {
         
         // Static variant without args if needed
         @JvmStatic
+        @Suppress("unused")
         fun getClassLoaderStatic(): ClassLoader {
             return JniBridge::class.java.classLoader!!
         }
@@ -69,7 +71,7 @@ class JniBridge {
                     val height = rgba.height
                     val pixels = IntArray(width * height)
                     rgba.getPixels(pixels, 0, width, 0, 0, width, height)
-                    val out = ByteArrayOutputStream(8 + pixels.size * 4)
+                    val out = ByteArrayOutputStream(8 + (pixels.size * 4))
                     out.write(width and 0xFF)
                     out.write((width shr 8) and 0xFF)
                     out.write((width shr 16) and 0xFF)

@@ -7,6 +7,7 @@
 #include "DirectionalAnimBank.h"
 #include "protocol/DZFootProtocol.h"
 #include <GLES3/gl3.h>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ struct MeshPart {
     int materialIndex = -1;
     std::string materialName;
     float baseColor[4] = {1,1,1,1};
+    int parentNodeIndex = -1; // for attached modular parts (hair/beard parented to neck/head)
 };
 
 struct RigNode {
@@ -35,6 +37,7 @@ struct AvatarConfig {
     uint8_t beardStyle = 0;   // 0=none, 1=stubble, 2=short, 3=full
     uint8_t skinColor = 3;    // 0..6 (7 tones)
     uint8_t hairColor = 0;    // 0..7 (8 colors)
+    uint8_t playerNumber = 0; // jersey number 0..99
     float   height = 1.0f;
 };
 
@@ -68,9 +71,25 @@ public:
     void draw(const float* viewProj, const float* playerWorld, float rotY,
               uint8_t animId, uint8_t previousAnim, float blend, float time, float prevTime,
               GLuint staticShader, GLuint skinnedShader, const float* teamColor,
+              GLuint kitTexture, GLuint shortTexture,
               int playerIndex = -1, const DirAnimClip* dirClip = nullptr,
-              const AvatarConfig* avatar = nullptr);
+              const AvatarConfig* avatar = nullptr,
+              const float* lightSpaceMatrix = nullptr, GLuint shadowTex = 0);
     void destroy();
+
+    AvatarConfig loadedCfg_;
+    bool hasLoadedCfg_ = false;
+
+    bool configMatches(const AvatarConfig& cfg) const {
+        return hasLoadedCfg_ &&
+               loadedCfg_.bodyType == cfg.bodyType &&
+               loadedCfg_.hairStyle == cfg.hairStyle &&
+               loadedCfg_.beardStyle == cfg.beardStyle &&
+               loadedCfg_.skinColor == cfg.skinColor &&
+               loadedCfg_.hairColor == cfg.hairColor &&
+               loadedCfg_.playerNumber == cfg.playerNumber &&
+               fabsf(loadedCfg_.height - cfg.height) < 0.001f;
+    }
 
 private:
     int findNodeIndex(const char* name) const;
@@ -114,13 +133,11 @@ public:
                      const uint8_t* playerAnims = nullptr, const float* playerVels = nullptr,
                      const float* playerRotY = nullptr,
                      const uint8_t* playerFlags = nullptr, const uint8_t* playerTeams = nullptr,
-                     const uint8_t* playerRoles = nullptr);
+                     const uint8_t* playerRoles = nullptr,
+                     class TouchController* ctrl = nullptr, int screenW = 0, int screenH = 0);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
-    void setMatchSetup(const dzfoot::MatchSetupPacket& setup) {
-        setup_ = setup;
-        hasSetup_ = true;
-    }
+    void setMatchSetup(const dzfoot::MatchSetupPacket& setup);
 
     SceneGraph& scene() { return scene_; }
     Camera& camera() { return camera_; }
@@ -134,12 +151,14 @@ private:
     GLuint cameraShader_  = 0;
     GLuint skinnedShader_ = 0; // Keeping for reference V2
     GLuint staticShader_  = 0; // Used for static objects AND rigid character parts
+    GLuint uiShader_      = 0; // 2D on-screen controller overlay
     GLuint quadVbo_       = 0;
     GLuint uvVbo_         = 0;
+    GLuint uiVbo_         = 0; // dynamic buffer for UI triangles
 
     SceneGraph scene_;
     Camera camera_;
-    PlayerRig playerRigs_[22];  // one modular rig per player
+    PlayerRig playerRigs_[25];  // one modular rig per entity (22 players + 3 officials)
     DirectionalAnimBank dirAnimBank_;
     PlayerAnimState playerAnims_[25];
     dzfoot::MatchSetupPacket setup_;
@@ -150,6 +169,9 @@ private:
     GLuint crowdTex_ = 0;
     GLuint goalnettingTex_ = 0;
     GLuint pitchOverlayTex_ = 0;
+    // Per-team kit textures generated from MatchSetup colors
+    GLuint teamKitTex_[2] = {0, 0};
+    GLuint teamShortTex_[2] = {0, 0};
 
     // Pitch GLB half-extents in local space (meters), used to normalize grass lines
     float pitchHalf_[2] = { 52.5f, 34.0f };
@@ -159,10 +181,28 @@ private:
         -1.0f,  1.0f,  1.0f,  1.0f,
     };
 
-    void renderStaticObjects(const float* viewProj);
-    void renderPlayers(const float* viewProj, const float* playerPositions, int numPlayers,
+    void renderStaticObjects(const float* viewProj, const float* lightSpaceMatrix);
+    void renderPlayers(const float* viewProj, const float* lightSpaceMatrix,
+                       const float* playerPositions, int numPlayers,
                        const uint8_t* playerAnims, const float* playerVels,
                        const float* playerRotY,
                        const uint8_t* playerFlags, const uint8_t* playerTeams,
                        const uint8_t* playerRoles);
+
+    void renderShadowMap(const float* playerPositions, int numPlayers,
+                         const uint8_t* playerAnims, const float* playerVels,
+                         const float* playerRotY,
+                         const uint8_t* playerFlags, const uint8_t* playerTeams,
+                         const uint8_t* playerRoles);
+
+    // Draw on-screen controller: joystick, action buttons, radar
+    void renderUI(class TouchController& ctrl, int screenW, int screenH,
+                  const float* viewProj, const float* playerPositions,
+                  const uint8_t* playerFlags, const uint8_t* playerTeams);
+
+    GLuint shadowFbo_ = 0;
+    GLuint shadowTex_ = 0;
+    GLuint shadowShader_ = 0;
+    static constexpr int kShadowMapSize = 2048;
+    float lightSpaceMatrix_[16];
 };

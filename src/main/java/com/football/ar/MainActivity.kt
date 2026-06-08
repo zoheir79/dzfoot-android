@@ -1,6 +1,5 @@
 package com.football.ar
 
-import android.content.Context
 import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
@@ -37,6 +36,21 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private lateinit var timerText: TextView
     private lateinit var eventText: TextView
 
+    // Dynamic crowd volume (FIFA-style reactive audio)
+    private var crowdVolumeCurrent = 0.3f
+    private var crowdVolumeTarget = 0.3f
+    private val crowdHandler = Handler(Looper.getMainLooper())
+    private val crowdRunnable = object : Runnable {
+        override fun run() {
+            // Smooth volume transition toward target
+            if (kotlin.math.abs(crowdVolumeCurrent - crowdVolumeTarget) > 0.01f) {
+                crowdVolumeCurrent += (crowdVolumeTarget - crowdVolumeCurrent) * 0.1f
+                audioSystem.setLoopVolume(crowdVolumeCurrent)
+            }
+            crowdHandler.postDelayed(this, 100)
+        }
+    }
+
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
 
@@ -55,6 +69,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
         audioSystem.init()
         loadSounds()
+        crowdHandler.post(crowdRunnable)
 
         scoreText = TextView(this).apply {
             textSize = 24f
@@ -102,37 +117,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 gravity = android.view.Gravity.CENTER
             })
 
-            val btnLayout = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(20, 100, 20, 20)
-                val lp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                    marginEnd = 20
-                    topMargin = 200
-                }
-                lp.gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
-                layoutParams = lp
-
-                fun makeBtn(text: String, onDown: () -> Unit, onUp: () -> Unit): Button {
-                    return Button(context).apply {
-                        this.text = text
-                        textSize = 12f
-                        setOnTouchListener { _, event ->
-                            when (event.action) {
-                                MotionEvent.ACTION_DOWN -> { onDown(); sendInput(); true }
-                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { onUp(); sendInput(); true }
-                                else -> false
-                            }
-                        }
-                    }
-                }
-
-                addView(makeBtn("Sprint", { jni.nativeSetSprint(true) }, { jni.nativeSetSprint(false) }))
-                addView(makeBtn("Dribble", { jni.nativeSetActionDribble(true) }, { jni.nativeSetActionDribble(false) }))
-                addView(makeBtn("Pass", { jni.nativeSetActionPass(true) }, { jni.nativeSetActionPass(false) }))
-                addView(makeBtn("Shot", { jni.nativeSetActionShot(true) }, { jni.nativeSetActionShot(false) }))
-                addView(makeBtn("Kick", { jni.nativeSetActionKick(true) }, { jni.nativeSetActionKick(false) }))
-            }
-            addView(btnLayout)
+            // On-screen controls are now rendered natively via OpenGL (TouchController)
+            // The old Android Button layout has been removed to avoid overlap.
         }
         setContentView(root)
 
@@ -140,11 +126,48 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 123)
         }
 
-        showModeSelectionDialog()
+        // Check if launched from MenuActivity with parameters
+        val mode = intent.getStringExtra("mode")
+        val roomId = intent.getStringExtra("room_id")
+        val token = intent.getStringExtra("token")
+        val lkUrl = intent.getStringExtra("livekit_url")
+        val forceClassic = intent.getBooleanExtra("force_classic", false)
+        val forceMcoVsMca = intent.getBooleanExtra("force_mco_vs_mca", false)
+        val teamA = intent.getStringExtra("team_a")
+        val teamB = intent.getStringExtra("team_b")
+
+        if (mode != null && roomId != null && token != null && lkUrl != null) {
+            // Launched from menu with all parameters — connect directly
+            checkArCoreAndInit(forceClassic = forceClassic)
+            connectToLiveKit(lkUrl, token, roomId, mode)
+        } else if (mode != null) {
+            // Single-player modes that need match creation
+            checkArCoreAndInit(forceClassic = forceClassic)
+            when (mode) {
+                "ai_vs_ai" -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = forceMcoVsMca)
+                "vs_ai", "ar" -> createMatchAndConnect(mode = if (mode == "ar") "vs_ai" else mode, forceMcoVsMca = false)
+                else -> showModeSelectionDialogFallback()
+            }
+        } else {
+            // Direct launch without parameters — show fallback dialog
+            showModeSelectionDialogFallback()
+        }
     }
 
-    private fun showModeSelectionDialog() {
-        val modes = arrayOf("Réalité Augmentée (AR)", "Rendu 3D Classique", "Test IA vs IA (MCO vs MCA)")
+    private fun connectToLiveKit(lkUrl: String, token: String, roomId: String, mode: String) {
+        lkManager = LiveKitManager(this)
+        lkManager.connect(lkUrl, token)
+        Log.i("MainActivity", "Connected to LiveKit room: $roomId (mode=$mode)")
+    }
+
+    private fun showModeSelectionDialogFallback() {
+        val modes = arrayOf(
+            "Réalité Augmentée (AR) vs IA",
+            "Rendu 3D Classique vs IA",
+            "Test IA vs IA (MCO vs MCA)",
+            "Créer Match vs Joueur (PvP)",
+            "Rejoindre un Match (PvP)"
+        )
         android.app.AlertDialog.Builder(this)
             .setTitle("Sélection du Mode de Jeu")
             .setItems(modes) { _, which ->
@@ -158,9 +181,16 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                         createMatchAndConnect(mode = "vs_ai")
                     }
                     2 -> {
-                        // Test mode: bot vs bot, MCO vs MCA, classic rendering
                         checkArCoreAndInit(forceClassic = true)
                         createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = true)
+                    }
+                    3 -> {
+                        checkArCoreAndInit(forceClassic = true)
+                        createMatchPvP()
+                    }
+                    4 -> {
+                        checkArCoreAndInit(forceClassic = true)
+                        joinMatch()
                     }
                 }
             }
@@ -178,7 +208,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 var teamA: String? = null
                 var teamB: String? = null
                 try {
-                    val teamsUrl = java.net.URL("http://102.220.31.70:8005/teams")
+                    val teamsUrl = java.net.URL("${Config.catalogUrl}/teams")
                     val teamsConn = teamsUrl.openConnection() as java.net.HttpURLConnection
                     teamsConn.requestMethod = "GET"
                     teamsConn.connectTimeout = 5000
@@ -192,20 +222,20 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                                 val obj = teamsArr.getJSONObject(i)
                                 val name = obj.optString("name", "").lowercase()
                                 val shortName = obj.optString("short_name", "").lowercase()
-                                if (name.contains("oranais") || shortName == "mco") {
+                                if ((name.contains("oranais")) || (shortName == "mco")) {
                                     teamA = obj.getString("id")
                                     Log.i("MainActivity", "Found MCO: ${obj.optString("name")} id=$teamA")
                                 }
-                                if (name.contains("moulodia club d'alger") || shortName == "mca") {
+                                if ((name.contains("moulodia club d'alger")) || (shortName == "mca")) {
                                     teamB = obj.getString("id")
                                     Log.i("MainActivity", "Found MCA: ${obj.optString("name")} id=$teamB")
                                 }
                             }
-                            if (teamA == null || teamB == null) {
+                            if ((teamA == null) || (teamB == null)) {
                                 Log.w("MainActivity", "MCO/MCA not found in catalog, falling back to random")
                             }
                         }
-                        if (teamA == null || teamB == null) {
+                        if ((teamA == null) || (teamB == null)) {
                             if (teamsArr.length() >= 2) {
                                 val idxA = (0 until teamsArr.length()).random()
                                 var idxB = (0 until teamsArr.length()).random()
@@ -223,7 +253,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 }
 
                 // 2. Create the match
-                val url = java.net.URL("http://102.220.31.70:8002/internal/create-match")
+                val url = java.net.URL("${Config.sessionUrl}/internal/create-match")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -231,12 +261,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 conn.connectTimeout = 10000
                 conn.readTimeout = 10000
 
-                val playerA = if (mode == "ai_vs_ai") "bot" else "user1"
+                val playerA = if (mode == "ai_vs_ai") "bot" else java.util.UUID.randomUUID().toString()
                 val playerB = "bot"
                 val bodyBuilder = StringBuilder()
                 bodyBuilder.append("{\"player_a\":\"$playerA\",\"player_b\":\"$playerB\",\"duration\":300,\"mode\":\"$mode\"")
-                if (teamA != null) bodyBuilder.append(",\"team_a\":\"$teamA\"")
-                if (teamB != null) bodyBuilder.append(",\"team_b\":\"$teamB\"")
+                teamA?.let { bodyBuilder.append(",\"team_a\":\"$it\"") }
+                teamB?.let { bodyBuilder.append(",\"team_b\":\"$it\"") }
                 bodyBuilder.append("}")
                 val body = bodyBuilder.toString()
                 Log.i("MainActivity", "Create-match body: $body")
@@ -273,6 +303,196 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }.start()
     }
 
+    private fun createMatchPvP() {
+        Thread {
+            try {
+                var teamA: String? = null
+                var teamB: String? = null
+                try {
+                    val teamsUrl = java.net.URL("${Config.catalogUrl}/teams")
+                    val teamsConn = teamsUrl.openConnection() as java.net.HttpURLConnection
+                    teamsConn.requestMethod = "GET"
+                    teamsConn.connectTimeout = 5000
+                    teamsConn.readTimeout = 5000
+                    teamsConn.instanceFollowRedirects = false
+                    if (teamsConn.responseCode == 200) {
+                        val teamsResp = teamsConn.inputStream.bufferedReader().use { it.readText() }
+                        val teamsArr = org.json.JSONArray(teamsResp)
+                        if (teamsArr.length() >= 2) {
+                            val idxA = (0 until teamsArr.length()).random()
+                            var idxB = (0 until teamsArr.length()).random()
+                            while (idxB == idxA) idxB = (0 until teamsArr.length()).random()
+                            teamA = teamsArr.getJSONObject(idxA).getString("id")
+                            teamB = teamsArr.getJSONObject(idxB).getString("id")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "Could not fetch DZ teams: ${e.message}")
+                }
+
+                val playerA = java.util.UUID.randomUUID().toString()
+                val url = java.net.URL("${Config.sessionUrl}/internal/create-match")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+
+                val bodyBuilder = StringBuilder()
+                bodyBuilder.append("{\"player_a\":\"$playerA\",\"duration\":300,\"mode\":\"1v1\"")
+                teamA?.let { bodyBuilder.append(",\"team_a\":\"$it\"") }
+                teamB?.let { bodyBuilder.append(",\"team_b\":\"$it\"") }
+                bodyBuilder.append("}")
+                val body = bodyBuilder.toString()
+                Log.i("MainActivity", "Create PvP body: $body")
+                conn.outputStream.use { os -> os.write(body.toByteArray(Charsets.UTF_8)) }
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    Log.e("MainActivity", "Create PvP match failed: HTTP $responseCode")
+                    return@Thread
+                }
+
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = org.json.JSONObject(response)
+                val roomId = json.getString("room_id")
+                val rawLkUrl = json.getString("livekit_url")
+                val lkUrl = when {
+                    rawLkUrl.startsWith("wss://") || rawLkUrl.startsWith("ws://") -> rawLkUrl
+                    rawLkUrl.startsWith("https://") -> rawLkUrl.replace("https://", "wss://")
+                    rawLkUrl.startsWith("http://") -> rawLkUrl.replace("http://", "ws://")
+                    else -> "wss://$rawLkUrl"
+                }
+                val token = json.getString("token")
+                val status = json.optString("status", "running")
+
+                runOnUiThread {
+                    lkManager = LiveKitManager(this)
+                    lkManager.connect(lkUrl, token)
+                    if (status == "waiting") {
+                        Log.i("MainActivity", "PvP match created. Waiting for opponent in room $roomId")
+                        android.widget.Toast.makeText(this, "Match créé ! En attente d'un adversaire...", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        Log.i("MainActivity", "Connected to LiveKit room: $roomId (PvP)")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to create PvP match: ${e.message}")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this, "Erreur création match PvP", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun joinMatch() {
+        Thread {
+            try {
+                // 1. Fetch waiting matches
+                val listUrl = java.net.URL("${Config.sessionUrl}/internal/waiting-matches")
+                val listConn = listUrl.openConnection() as java.net.HttpURLConnection
+                listConn.requestMethod = "GET"
+                listConn.connectTimeout = 10000
+                listConn.readTimeout = 10000
+                val listCode = listConn.responseCode
+                if (listCode != 200) {
+                    Log.e("MainActivity", "Failed to fetch waiting matches: HTTP $listCode")
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this, "Aucun match disponible", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
+                }
+                val listResp = listConn.inputStream.bufferedReader().use { it.readText() }
+                val listJson = org.json.JSONObject(listResp)
+                val matchesArr = listJson.optJSONArray("matches")
+                if (matchesArr == null || matchesArr.length() == 0) {
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this, "Aucun match en attente", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
+                }
+
+                val roomIds = mutableListOf<String>()
+                val labels = mutableListOf<String>()
+                for (i in 0 until matchesArr.length()) {
+                    val obj = matchesArr.getJSONObject(i)
+                    roomIds.add(obj.getString("room_id"))
+                    val playerA = obj.optString("player_a", "?")
+                    labels.add("Match de $playerA")
+                }
+
+                runOnUiThread {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Rejoindre un match")
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            val selectedRoomId = roomIds[which]
+                            joinSelectedMatch(selectedRoomId)
+                        }
+                        .setNegativeButton("Annuler", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to list waiting matches: ${e.message}")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this, "Erreur liste des matches", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun joinSelectedMatch(roomId: String) {
+        Thread {
+            try {
+                val playerB = java.util.UUID.randomUUID().toString()
+                val url = java.net.URL("${Config.sessionUrl}/internal/join-match")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+
+                val body = "{\"room_id\":\"$roomId\",\"player_id\":\"$playerB\"}"
+                Log.i("MainActivity", "Join-match body: $body")
+                conn.outputStream.use { os -> os.write(body.toByteArray(Charsets.UTF_8)) }
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $responseCode"
+                    Log.e("MainActivity", "Join match failed: $err")
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this, "Impossible de rejoindre le match", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
+                }
+
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = org.json.JSONObject(response)
+                val rawLkUrl = json.getString("livekit_url")
+                val lkUrl = when {
+                    rawLkUrl.startsWith("wss://") || rawLkUrl.startsWith("ws://") -> rawLkUrl
+                    rawLkUrl.startsWith("https://") -> rawLkUrl.replace("https://", "wss://")
+                    rawLkUrl.startsWith("http://") -> rawLkUrl.replace("http://", "ws://")
+                    else -> "wss://$rawLkUrl"
+                }
+                val token = json.getString("token")
+
+                runOnUiThread {
+                    lkManager = LiveKitManager(this)
+                    lkManager.connect(lkUrl, token)
+                    Log.i("MainActivity", "Joined PvP match $roomId, connected to LiveKit")
+                    android.widget.Toast.makeText(this, "Match rejoint !", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to join match: ${e.message}")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this, "Erreur connexion au match", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
     private var userRequestedInstall = false
 
     private fun isEmulator(): Boolean {
@@ -286,7 +506,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun checkArCoreAndInit(forceClassic: Boolean) {
         if (forceClassic) {
             Log.i("MainActivity", "Classic mode requested: skipping ARCore session creation")
-            jni.nativeInit(this, assets, true)
+            jni.nativeInit(this, assets, isEmulator = true)
             return
         }
 
@@ -314,15 +534,15 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 Log.e("MainActivity", "ARCore install request failed: ${e.message}")
             }
             try {
-                jni.nativeInit(this, assets, false)
+                jni.nativeInit(this, assets, isEmulator = false)
                 Log.i("MainActivity", "ARCore native init done")
             } catch (e: Exception) {
                 Log.e("MainActivity", "ARCore native init failed: ${e.message} - using fallback")
-                jni.nativeInit(this, assets, true)
+                jni.nativeInit(this, assets, isEmulator = true)
             }
         } else {
             Log.w("MainActivity", "ARCore NOT supported on this device - using fallback rendering")
-            jni.nativeInit(this, assets, true)
+            jni.nativeInit(this, assets, isEmulator = true)
         }
     }
 
@@ -343,7 +563,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         event ?: return false
-        jni.nativeOnTouch(event.x, event.y, event.action)
+        val action = event.actionMasked
+        val pointerIdx = event.actionIndex
+        val pointerId = event.getPointerId(pointerIdx)
+        val x = event.getX(pointerIdx)
+        val y = event.getY(pointerIdx)
+        jni.nativeOnTouch(x, y, action, pointerId)
         sendInput()
         return true
     }
@@ -362,7 +587,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val seconds = (timer % 60).toInt()
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
-            timerText.text = String.format("%02d:%02d", minutes, seconds)
+            timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
         }
     }
 
@@ -378,7 +603,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
-        jni.nativeDisplayChanged(windowManager.defaultDisplay.rotation, w, h)
+        @Suppress("DEPRECATION")
+        val rotation = windowManager.defaultDisplay.rotation
+        jni.nativeDisplayChanged(rotation, w, h)
     }
 
     override fun onResume() {
@@ -398,14 +625,22 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (::lkManager.isInitialized) {
+            lkManager.disconnect()
+        }
         jni.nativeDestroy()
     }
 
     // Called from C++ via JNI (AudioManager bridge)
+    @Suppress("unused")
     fun nativeAudioPlay(name: String) { audioSystem.play(name) }
+    @Suppress("unused")
     fun nativeAudioStopAll() { audioSystem.stopAll() }
+    @Suppress("unused")
     fun nativeAudioSetVolume(vol: Float) { audioSystem.setVolume(vol) }
+    @Suppress("unused")
     fun nativeAudioPlayLoop(name: String) { audioSystem.playLoop(name) }
+    @Suppress("unused")
     fun nativeAudioStopLoop() { audioSystem.stopLoop() }
 
     private fun loadSounds() {
@@ -456,11 +691,13 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
     }
 
-    private fun onGoal(team: Int, playerIdx: Int, scoreA: Int, scoreB: Int) {
+    private fun onGoal(team: Int, @Suppress("UNUSED_PARAMETER") playerIdx: Int, scoreA: Int, scoreB: Int) {
         audioSystem.play("whistle2")
+        crowdVolumeTarget = 1.0f // crowd erupts
         Handler(Looper.getMainLooper()).postDelayed({
             audioSystem.play("crowd01")
         }, 500)
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.5f }, 4000)
         vibrate(500)
 
         val teamName = if (team == 0) "Team A" else "Team B"
@@ -473,6 +710,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private fun onYellowCard(team: Int, playerIdx: Int) {
         audioSystem.play("whistle3")
+        crowdVolumeTarget = 0.6f
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 2000)
         vibrate(200)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("🟨 YELLOW CARD — $teamName #$playerIdx", 2000)
@@ -480,30 +719,38 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private fun onRedCard(team: Int, playerIdx: Int) {
         audioSystem.play("whistle3")
+        crowdVolumeTarget = 0.2f // shocked silence
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.4f }, 3000)
         vibrate(400)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("🟥 RED CARD — $teamName #$playerIdx", 3000)
     }
 
-    private fun onSubstitution(team: Int, playerIdx: Int) {
+    private fun onSubstitution(team: Int, @Suppress("UNUSED_PARAMETER") playerIdx: Int) {
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("🔄 SUBSTITUTION — $teamName", 2000)
     }
 
     private fun onSetPiece(name: String, team: Int) {
         audioSystem.play("whistle2")
+        crowdVolumeTarget = 0.5f // tension builds
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.3f }, 2000)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("$name — $teamName", 1500)
     }
 
-    private fun onFoul(team: Int, playerIdx: Int) {
+    private fun onFoul(@Suppress("UNUSED_PARAMETER") team: Int, @Suppress("UNUSED_PARAMETER") playerIdx: Int) {
         audioSystem.play("whistle3")
+        crowdVolumeTarget = 0.7f // crowd reacts to foul
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 1500)
         vibrate(100)
         showEventOverlay("⚠️ FOUL", 1000)
     }
 
     private fun onShot() {
         audioSystem.play("ballsound")
+        crowdVolumeTarget = 0.8f // anticipation
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 2000)
     }
 
     private fun onPass() {
@@ -514,6 +761,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         audioSystem.play("whistle2")
         showEventOverlay("🔥 KICK OFF!", 2000)
         audioSystem.playLoop("crowd02")
+        crowdVolumeTarget = 0.5f
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 3000)
     }
 
     private fun onHalfTime() {
@@ -545,7 +794,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private fun vibrate(ms: Long) {
         try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
             if (vibrator != null && vibrator.hasVibrator()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))

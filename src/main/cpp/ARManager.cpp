@@ -222,25 +222,24 @@ void ARManager::getViewMatrix(float* out) const {
     if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
     if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
     
-    // 2. Organic shudder — exact PC formula:
-    //    shudder = random(-0.1,0.1) * (ballSpeed*0.8 + 6.0) * 0.2
+    // 2. Organic shudder — reduced for steady broadcast feel
+    //    Gentle shudder only on fast ball, strong damping for heavy camera feel
     shudderSeed_++;
-    float shudderAmt = (ballSpeed_ * 0.8f + 6.0f) * 0.02f; // max ~0.28m for fast ball
-    float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;  // approx random(-0.94, 0.94)
+    float shudderAmt = (ballSpeed_ * 0.8f + 2.0f) * 0.02f; // reduced base ~0.04m at rest
+    float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
     float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
-    // Exponential decay (camera inertia) — same time constant feel as PC
-    shudderAccumX_ = shudderAccumX_ * 0.88f + noiseX * shudderAmt * 0.12f;
-    shudderAccumY_ = shudderAccumY_ * 0.88f + noiseY * shudderAmt * 0.12f;
+    // Stronger decay = steadier camera (heavy TV crane inertia)
+    shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
+    shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
     
-    // 3. Camera position — PC "wide cam" defaults converted to our 0.1 GLB scale:
-    //    Effective sideline: Z ≈ -3.8m, height: Y ≈ 2.8m
-    //    Target scale factors: X=0.85, Z(lat)=0.75, Y(ht)=0.2
+    // 3. Camera position — inside stadium, near pitch edge
+    //    Z=-3.5m = closer to action, Y=2.2m = slightly above pitch for framing
     float camX = targetX * 0.85f + shudderAccumX_;
-    float camZ = targetZ * 0.75f - 3.8f;                 // sideline
-    float camY = 2.8f + shudderAccumY_;                  // height
+    float camZ = targetZ * 0.75f - 2.8f;                 // closer to sideline (zoom in)
+    float camY = 2.0f + shudderAccumY_;                  // slightly lower for immersion
     
     lookAt(out, camX, camY, camZ,
-                 targetX, 0.05f, targetZ,
+                 targetX, 0.0f, targetZ,                // track ball at ground level
                  0.0f, 1.0f, 0.0f); // Y is up
 }
 
@@ -249,11 +248,10 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
         return;
     }
-    // Telephoto Broadcast FOV — PC wide cam defaults:
-    //    cameraFOV = (fov_calc * 28.0) - (lateralDist / 3.0)
-    //    base ≈ 19.6°, widens slightly when target is near sidelines
+    // Stadium spectator FOV — tighter telephoto for larger player details
+    //    45° midfield → 50° near sideline for immersive close-up broadcast feel
     float distRatio = std::abs(smoothFocusX_) / 5.25f; // 0=center, 1=sideline
-    float fovDeg = 22.0f + distRatio * 3.0f; // 22° → 25°
+    float fovDeg = 45.0f + distRatio * 5.0f; // 45° → 50° telephoto zoom
     float fov = fovDeg * 3.14159265f / 180.0f;
     float f = 1.0f / tanf(fov / 2.0f);
     float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
