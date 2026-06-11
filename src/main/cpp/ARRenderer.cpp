@@ -548,6 +548,7 @@ bool PlayerRig::loadBody(const char* bodyGlb) {
     animations = std::move(scene.animations);
 
     // Load shared textures (kit, shoe) — skin/hair swapped per-player at runtime
+    skinTex = generateProceduralTexture(0); // fallback skin tone (warm olive)
     kitTex = loadAssetTexture("modular/textures/kit_template.png");
     if (!kitTex) kitTex = generateProceduralTexture(1);
     shoeTex = loadAssetTexture("modular/textures/shoe.png");
@@ -1019,47 +1020,80 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             partColor[1] = part.baseColor[1];
             partColor[2] = part.baseColor[2];
 
+            // Helper: case-insensitive substring search for material matching
+            auto matContains = [&](const char* keyword) -> bool {
+                const char* s = part.materialName.c_str();
+                size_t klen = strlen(keyword);
+                size_t slen = part.materialName.size();
+                for (size_t i = 0; i + klen <= slen; ++i) {
+                    if (strncasecmp(s + i, keyword, klen) == 0) return true;
+                }
+                return false;
+            };
+
             GLuint boundTex = 0;
-            if (part.materialName == "skin") {
+            bool forceColor = false; // if true, override partColor with solid fallback
+            if (matContains("skin") || matContains("face") || matContains("head")) {
                 if (avatar && avatar->skinColor < 7 && skinTexs[avatar->skinColor]) {
                     boundTex = skinTexs[avatar->skinColor];
                 } else {
                     boundTex = skinTex;
                 }
-            } else if (part.materialName == "head_skin") {
-                if (avatar && avatar->skinColor < 7 && skinTexs[avatar->skinColor]) {
-                    boundTex = skinTexs[avatar->skinColor];
-                } else {
-                    boundTex = skinTex;
+                if (!boundTex) {
+                    // Solid skin fallback (olive tone)
+                    partColor[0] = 0.80f; partColor[1] = 0.60f; partColor[2] = 0.45f;
+                    forceColor = true;
                 }
-            } else if (part.materialName == "hair") {
+            } else if (matContains("hair") || matContains("cheveux")) {
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
-                } else {
-                    boundTex = kitTex; // fallback
+                } else if (hairTexs[0]) {
+                    boundTex = hairTexs[0]; // black fallback
                 }
-            } else if (part.materialName == "beard") {
+                if (!boundTex) {
+                    partColor[0] = 0.05f; partColor[1] = 0.05f; partColor[2] = 0.05f;
+                    forceColor = true;
+                }
+            } else if (matContains("beard")) {
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
-                } else {
-                    boundTex = kitTex; // fallback
+                } else if (hairTexs[0]) {
+                    boundTex = hairTexs[0];
                 }
-            } else if (part.materialName == "kit_upper") {
+                if (!boundTex) {
+                    partColor[0] = 0.05f; partColor[1] = 0.05f; partColor[2] = 0.05f;
+                    forceColor = true;
+                }
+            } else if (matContains("kit") || matContains("jersey") || matContains("upper") || matContains("torso")) {
                 boundTex = kitTexture ? kitTexture : kitTex;
                 if (!kitTexture) {
-                    partColor[0] *= teamColor[0];
-                    partColor[1] *= teamColor[1];
-                    partColor[2] *= teamColor[2];
+                    partColor[0] = teamColor[0];
+                    partColor[1] = teamColor[1];
+                    partColor[2] = teamColor[2];
+                    forceColor = true;
                 }
-            } else if (part.materialName == "kit_lower") {
+            } else if (matContains("short") || matContains("lower") || matContains("pant")) {
                 boundTex = shortTexture ? shortTexture : shortTex;
                 if (!shortTexture) {
-                    partColor[0] *= teamColor[0];
-                    partColor[1] *= teamColor[1];
-                    partColor[2] *= teamColor[2];
+                    partColor[0] = teamColor[0];
+                    partColor[1] = teamColor[1];
+                    partColor[2] = teamColor[2];
+                    forceColor = true;
                 }
-            } else if (part.materialName == "shoe") {
+            } else if (matContains("shoe") || matContains("foot") || matContains("chaussure")) {
                 boundTex = shoeTex;
+                if (!boundTex) {
+                    partColor[0] = 0.07f; partColor[1] = 0.07f; partColor[2] = 0.07f;
+                    forceColor = true;
+                }
+            } else {
+                // Unknown material: if baseColor is near-white, force a grey fallback
+                // so invisible geometry doesn't disappear against the sky
+                float lum = (partColor[0] + partColor[1] + partColor[2]) / 3.0f;
+                if (lum > 0.90f) {
+                    partColor[0] = 0.55f; partColor[1] = 0.55f; partColor[2] = 0.55f;
+                    forceColor = true;
+                }
             }
 
             if (boundTex && texLoc >= 0 && useTexLoc >= 0) {
@@ -1094,13 +1128,33 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             }
             float partColor[3] = {part.baseColor[0], part.baseColor[1], part.baseColor[2]};
             GLuint boundTex = 0;
-            if (part.materialName == "hair") {
-                if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
-                    boundTex = hairTexs[avatar->hairColor];
+            // Reuse same substring matching as body meshes
+            auto attContains = [&](const char* keyword) -> bool {
+                const char* s = part.materialName.c_str();
+                size_t klen = strlen(keyword);
+                size_t slen = part.materialName.size();
+                for (size_t i = 0; i + klen <= slen; ++i) {
+                    if (strncasecmp(s + i, keyword, klen) == 0) return true;
                 }
-            } else if (part.materialName == "beard") {
+                return false;
+            };
+            if (attContains("hair") || attContains("cheveux")) {
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
+                } else if (hairTexs[0]) {
+                    boundTex = hairTexs[0];
+                }
+                if (!boundTex) {
+                    partColor[0] = 0.05f; partColor[1] = 0.05f; partColor[2] = 0.05f;
+                }
+            } else if (attContains("beard")) {
+                if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
+                    boundTex = hairTexs[avatar->hairColor];
+                } else if (hairTexs[0]) {
+                    boundTex = hairTexs[0];
+                }
+                if (!boundTex) {
+                    partColor[0] = 0.05f; partColor[1] = 0.05f; partColor[2] = 0.05f;
                 }
             }
             if (boundTex && texLoc >= 0 && useTexLoc >= 0) {
