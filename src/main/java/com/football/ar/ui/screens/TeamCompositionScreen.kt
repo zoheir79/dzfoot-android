@@ -25,6 +25,8 @@ import com.football.ar.ui.utils.launchGameActivity
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TeamCompositionScreen(
@@ -322,8 +324,9 @@ fun StatBar(label: String, value: Float, color: Color) {
     }
 }
 
-fun fetchFormation(teamId: String): FormationResponse? {
-    return try {
+suspend fun fetchFormation(teamId: String): FormationResponse? {
+    return withContext(Dispatchers.IO) {
+    try {
         val url = URL("${com.football.ar.Config.catalogUrl}/teams/$teamId/formation")
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "GET"
@@ -332,7 +335,11 @@ fun fetchFormation(teamId: String): FormationResponse? {
         if (conn.responseCode == 200) {
             val response = conn.inputStream.bufferedReader().use { it.readText() }
             val obj = JSONObject(response)
-            val playersArr = obj.optJSONArray("players") ?: return null
+            val playersArr = obj.optJSONArray("players")
+            if (playersArr == null) {
+                Log.w("TeamComposition", "No players array in formation response")
+                return@withContext null
+            }
             val players = mutableListOf<PlayerInfo>()
             for (i in 0 until playersArr.length()) {
                 val p = playersArr.getJSONObject(i)
@@ -395,5 +402,6 @@ fun fetchFormation(teamId: String): FormationResponse? {
         Log.e("TeamComposition", "Failed to fetch formation: ${e.javaClass.simpleName}: ${e.message}")
         e.printStackTrace()
         null
+    }
     }
 }

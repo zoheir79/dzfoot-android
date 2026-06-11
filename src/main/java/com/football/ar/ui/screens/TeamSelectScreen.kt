@@ -15,6 +15,8 @@ import com.football.ar.Screen
 import com.football.ar.ui.components.*
 import com.football.ar.ui.theme.*
 import com.football.ar.ui.utils.launchGameActivity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TeamSelectScreen(navController: NavHostController, mode: String) {
@@ -100,8 +102,9 @@ fun TeamSelectScreen(navController: NavHostController, mode: String) {
     }
 }
 
-fun fetchTeamsFromCatalog(): List<TeamInfo> {
-    return try {
+suspend fun fetchTeamsFromCatalog(): List<TeamInfo> {
+    return withContext(Dispatchers.IO) {
+    try {
         val url = java.net.URL("${com.football.ar.Config.catalogUrl}/teams")
         val conn = url.openConnection() as java.net.HttpURLConnection
         conn.requestMethod = "GET"
@@ -137,6 +140,7 @@ fun fetchTeamsFromCatalog(): List<TeamInfo> {
         android.util.Log.e("TeamSelect", "Failed to fetch teams from catalog: ${e.javaClass.simpleName}: ${e.message}")
         e.printStackTrace()
         fetchTeamsFallback()
+    }
     }
 }
 
