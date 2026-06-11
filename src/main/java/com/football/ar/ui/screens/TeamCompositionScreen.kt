@@ -346,7 +346,8 @@ fun fetchFormation(teamId: String): FormationResponse? {
             null
         }
     } catch (e: Exception) {
-        Log.e("TeamComposition", "Failed to fetch formation: ${e.message}")
+        Log.e("TeamComposition", "Failed to fetch formation: ${e.javaClass.simpleName}: ${e.message}")
+        e.printStackTrace()
         null
     }
 }

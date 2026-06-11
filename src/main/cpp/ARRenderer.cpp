@@ -600,8 +600,8 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
             float scale = 1.0f;
             float shiftY = 0.0f;
             if (strcmp(materialCat, "hair") == 0) {
-                scale = 1.6f;
-                shiftY = 0.04f; // raise 4cm above the skull
+                scale = 1.0f;
+                shiftY = 0.00f; // hair GLB already sized for head bone
             } else if (strcmp(materialCat, "beard") == 0) {
                 scale = 1.4f;
                 shiftY = -0.02f;
@@ -657,7 +657,7 @@ bool PlayerRig::loadModular(const AvatarConfig& cfg) {
         const char* hs = hair_names[cfg.hairStyle % 6];
         char hairPath[128];
         snprintf(hairPath, sizeof(hairPath), "modular/parts/hair_%s.glb", hs);
-        attachPart(hairPath, "neck", "hair");
+        attachPart(hairPath, "head", "hair");
     }
 
     // 4. Attach beard (if not none)
@@ -1438,10 +1438,9 @@ vec3 grassPitch() {
     float stripe = step(0.5, fract(n.x * 8.0));
     vec3 grass = mix(baseGreen, darkGreen, stripe);
 
-    // ─── Procedural grass blade texture (normal + albedo noise) ───
-    float blade1 = sin(p.x * 56.0 + p.y * 43.0) * sin(p.x * 31.0 - p.y * 67.0);
-    float blade2 = sin(p.x * 89.0 + p.y * 112.0 + 1.7) * 0.5;
-    float bladeNoise = (blade1 * 0.012 + blade2 * 0.006);
+    // ─── Procedural grass blade noise (hash-based, avoids moiré circles) ───
+    float hash = fract(sin(dot(floor(p * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float bladeNoise = (hash - 0.5) * 0.012;
     grass += bladeNoise;
 
     // ─── Wear patterns (center circle + penalty boxes get trampled) ───
@@ -1531,8 +1530,8 @@ vec3 stadiumShader() {
     //  - Y <= 1.0: Pitch apron and advertising boards
 
     if (v_LocalPos.y > 15.0) {
-        // High intensity warm white floodlight glow (overflows for bloom)
-        return vec3(2.5, 2.3, 1.8);
+        // Warm white floodlight glow (reduced to avoid excessive bloom)
+        return vec3(1.2, 1.1, 0.85);
     } 
     
     if (v_LocalPos.y > 10.0) {
@@ -1797,7 +1796,7 @@ void main() {
         float coneAngle = dot(normalize(toFrag), coneDir);
         if (coneAngle > 0.82) {
             float intensity = pow((coneAngle - 0.82) / 0.18, 2.5);
-            volumeGlow += (intensity * 0.08) / (1.0 + dist * 0.25);
+            volumeGlow += (intensity * 0.03) / (1.0 + dist * 0.25);
         }
     }
 
@@ -1806,8 +1805,8 @@ void main() {
     // ─── Filmic tone mapping (ACES) ───────────────────────────
     vec3 tm = acesTonemap(lit);
 
-    // ─── Bloom (extract bright areas) ───────────────────────────
-    vec3 bloom = max(tm - vec3(0.70), vec3(0.0)) * vec3(0.18, 0.14, 0.10);
+    // ─── Bloom (extract bright areas, reduced intensity) ─────────
+    vec3 bloom = max(tm - vec3(0.85), vec3(0.0)) * vec3(0.06, 0.05, 0.03);
     vec3 finalColor = tm + bloom;
 
     // ─── Vignette (screen-space) ────────────────────────────────

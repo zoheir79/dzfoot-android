@@ -131,7 +131,8 @@ fun fetchTeamsFromCatalog(): List<TeamInfo> {
             fetchTeamsFallback()
         }
     } catch (e: Exception) {
-        android.util.Log.e("TeamSelect", "Failed to fetch teams from catalog: ${e.message}")
+        android.util.Log.e("TeamSelect", "Failed to fetch teams from catalog: ${e.javaClass.simpleName}: ${e.message}")
+        e.printStackTrace()
         fetchTeamsFallback()
     }
 }
