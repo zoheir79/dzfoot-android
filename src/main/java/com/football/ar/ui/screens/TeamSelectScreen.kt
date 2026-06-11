@@ -40,7 +40,14 @@ fun TeamSelectScreen(navController: NavHostController, mode: String) {
         ) {
             ScreenHeader(
                 title = if (step == 1) "CHOISIR TON EQUIPE" else "CHOISIR L'ADVERSAIRE",
-                onBack = { navController.popBackStack() }
+                onBack = {
+                    if (step == 2) {
+                        step = 1
+                        selectedTeamB = null
+                    } else {
+                        navController.popBackStack()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -67,24 +74,20 @@ fun TeamSelectScreen(navController: NavHostController, mode: String) {
                             onClick = {
                                 if (step == 1) {
                                     selectedTeamA = team
-                                    if (mode == "1v1") {
-                                        step = 2
-                                    } else {
-                                        // For vs_ai and ar, go to team composition screen
-                                        val opponent = teams.firstOrNull { it.id != team.id }
-                                        navController.navigate(
-                                            Screen.TeamComposition.createRoute(
-                                                mode,
-                                                team.id,
-                                                opponent?.id ?: ""
-                                            )
-                                        )
-                                    }
+                                    step = 2
                                 } else {
                                     selectedTeamB = team
                                     if (mode == "1v1") {
                                         navController.navigate(
                                             Screen.WaitingPvP.createRoute(selectedTeamA!!.id, team.id)
+                                        )
+                                    } else {
+                                        navController.navigate(
+                                            Screen.TeamComposition.createRoute(
+                                                mode,
+                                                selectedTeamA!!.id,
+                                                team.id
+                                            )
                                         )
                                     }
                                 }

@@ -77,6 +77,10 @@ static int gScreenW = 1080, gScreenH = 1920;
 jobject gActivityObj = nullptr;
 JavaVM* gJavaVM = nullptr;
 
+// Last known camera forward on XZ plane (updated each frame, used for camera-relative controls)
+static float gCamFwdX = 0.0f;
+static float gCamFwdZ = 1.0f;
+
 extern "C" {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
@@ -218,6 +222,19 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     jfloat* anchor = env->GetFloatArrayElements(anchorMat, nullptr);
     gArManager.getViewMatrix(view);
     gArManager.getProjectionMatrix(proj, 0.01f, 100.0f);
+
+    // Extract camera forward on XZ plane from view matrix for camera-relative controls.
+    // OpenGL view matrix row 2 = -forward (world space), elements [2] and [10] are X and Z.
+    {
+        float vfwdX = -view[2];
+        float vfwdZ = -view[10];
+        float vlen = std::sqrt(vfwdX * vfwdX + vfwdZ * vfwdZ);
+        if (vlen > 0.0001f) {
+            gCamFwdX = vfwdX / vlen;
+            gCamFwdZ = vfwdZ / vlen;
+        }
+    }
+
     ARPose pose = gArManager.getMarkerAnchorPose();
     if (pose.valid) {
         std::memcpy(anchor, pose.matrix, 16 * sizeof(float));
@@ -243,6 +260,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
                  "Ensure GF server is running and Session backend is relaying. "
                  "gsLen=%d", gameStateData ? env->GetArrayLength(gameStateData) : -1);
         }
+        // Apply camera-relative rotation to raw joystick input before using it
+        gTouchController.applyCameraRotation(gCamFwdX, gCamFwdZ);
         const dzfoot::PlayerInputPacket& input = gTouchController.getInput();
         float speed = 0.05f;
         gs.players[0].pos[0] += input.dirX * speed;
@@ -497,6 +516,8 @@ Java_com_football_ar_JniBridge_nativeOnTouch(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
+    // Rotate input by last known camera direction so controls are camera-relative
+    gTouchController.applyCameraRotation(gCamFwdX, gCamFwdZ);
     constexpr size_t pktSize = sizeof(dzfoot::PlayerInputPacket);
     uint8_t buf[pktSize];
     gTouchController.serialize(buf, pktSize);

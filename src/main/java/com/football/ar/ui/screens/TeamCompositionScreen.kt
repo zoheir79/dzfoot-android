@@ -15,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
@@ -37,10 +38,17 @@ fun TeamCompositionScreen(
     var teamB by remember { mutableStateOf<FormationResponse?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableStateOf(0) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var retryCount by remember { mutableStateOf(0) }
 
-    LaunchedEffect(teamAId, teamBId) {
+    LaunchedEffect(teamAId, teamBId, retryCount) {
+        isLoading = true
+        errorMsg = null
         teamA = fetchFormation(teamAId)
         teamB = fetchFormation(teamBId)
+        if (teamA == null || teamB == null) {
+            errorMsg = "Impossible de charger les compositions.\nVerifiez votre connexion reseau."
+        }
         isLoading = false
     }
 
@@ -101,13 +109,32 @@ fun TeamCompositionScreen(
                     CircularProgressIndicator(color = AccentGreen)
                 }
             } else {
-                val team = if (selectedTab == 0) teamA else teamB
+                val err = errorMsg
+                if (err != null) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = err,
+                                color = AlgeriaRed,
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
+                            )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { retryCount++ },
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                        ) {
+                            Text("Reessayer")
+                        }
+                    }
+                } else {
+                    val team = if (selectedTab == 0) teamA else teamB
                 val primaryColor = try {
                     team?.colorPrimary?.let { Color(android.graphics.Color.parseColor(it)) } ?: AccentGreen
                 } catch (_: Exception) { AccentGreen }
 
                 Text(
-                    text = "Formation: ${team?.formation?.size ?: 0} joueurs",
+                    text = "Effectif: ${team?.players?.size ?: 0} joueurs",
                     color = TextSecondary,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 4.dp)
@@ -333,12 +360,29 @@ fun fetchFormation(teamId: String): FormationResponse? {
                     )
                 )
             }
+            val formationArr = obj.optJSONArray("formation")
+            val formationList = mutableListOf<FormationEntry>()
+            if (formationArr != null) {
+                for (i in 0 until formationArr.length()) {
+                    val f = formationArr.getJSONObject(i)
+                    formationList.add(
+                        FormationEntry(
+                            role = f.optString("role", "CM"),
+                            x = f.optDouble("x", 0.0).toFloat(),
+                            y = f.optDouble("y", 0.0).toFloat(),
+                            controllable = f.optBoolean("controllable", false)
+                        )
+                    )
+                }
+            }
+
             FormationResponse(
                 teamName = obj.optString("team_name", ""),
                 shortName = obj.optString("short_name", null),
                 colorPrimary = obj.optString("color_primary", null),
                 colorSecondary = obj.optString("color_secondary", null),
                 league = obj.optString("league", null),
+                formation = formationList,
                 players = players
             )
         } else {

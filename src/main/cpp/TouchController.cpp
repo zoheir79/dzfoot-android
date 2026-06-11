@@ -139,6 +139,33 @@ void TouchController::setActivePlayer(uint8_t team, uint8_t playerIdx) {
     activePlayerIdx_ = playerIdx;
 }
 
+void TouchController::applyCameraRotation(float camFwdX, float camFwdZ) {
+    // Normalize camera forward on XZ plane
+    float len = std::sqrt(camFwdX * camFwdX + camFwdZ * camFwdZ);
+    if (len < 0.0001f) return;
+    float fx = camFwdX / len;
+    float fz = camFwdZ / len;
+    // Camera right = perpendicular to forward on XZ (right-hand rule, Y-up)
+    float rx =  fz;
+    float rz = -fx;
+
+    // input_.dirX = joystick right (+screen X)
+    // input_.dirZ = joystick up    (+screen -Y, mapped to world +Z in updateJoystick)
+    float inX = input_.dirX;
+    float inZ = input_.dirZ;
+
+    input_.dirX = inX * rx + inZ * fx;
+    input_.dirZ = inX * rz + inZ * fz;
+
+    // Also rotate aim indicator so pass/shot direction follows camera
+    if (aim_.visible) {
+        float aX = aim_.dirX;
+        float aY = aim_.dirY;
+        aim_.dirX = aX * rx + aY * fx;
+        aim_.dirY = aX * rz + aY * fz;
+    }
+}
+
 void TouchController::serialize(uint8_t* out, size_t maxLen) const {
     if (maxLen < sizeof(dzfoot::PlayerInputPacket)) return;
     dzfoot::PlayerInputPacket pkt = input_;

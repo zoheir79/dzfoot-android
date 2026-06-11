@@ -27,6 +27,10 @@ public:
     // Set which player this input controls (from GameState flags & 0x04)
     void setActivePlayer(uint8_t team, uint8_t playerIdx);
 
+    // Rotate raw joystick input by camera forward on XZ plane.
+    // camFwdX/Z = camera look direction (will be normalized internally).
+    void applyCameraRotation(float camFwdX, float camFwdZ);
+
     const dzfoot::PlayerInputPacket& getInput() const { return input_; }
     void serialize(uint8_t* out, size_t maxLen) const;
 
