@@ -127,61 +127,63 @@ fun TeamCompositionScreen(
                             Text("Reessayer")
                         }
                     }
+                }
                 } else {
                     val team = if (selectedTab == 0) teamA else teamB
-                val primaryColor = try {
-                    team?.colorPrimary?.let { Color(android.graphics.Color.parseColor(it)) } ?: AccentGreen
-                } catch (_: Exception) { AccentGreen }
+                    val primaryColor = try {
+                        team?.colorPrimary?.let { Color(android.graphics.Color.parseColor(it)) } ?: AccentGreen
+                    } catch (_: Exception) { AccentGreen }
 
-                Text(
-                    text = "Effectif: ${team?.players?.size ?: 0} joueurs",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                    Text(
+                        text = "Effectif: ${team?.players?.size ?: 0} joueurs",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    team?.players?.forEachIndexed { index, player ->
-                        PlayerCard(
-                            player = player,
-                            index = index,
-                            primaryColor = primaryColor
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Launch button
-                if (selectedTab == 1 || teamB != null) {
-                    Button(
-                        onClick = {
-                            launchGameActivity(
-                                context = context,
-                                mode = mode,
-                                forceClassic = (mode != "ar"),
-                                teamA = teamAId,
-                                teamB = teamBId
-                            )
-                        },
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                        shape = RoundedCornerShape(12.dp)
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Text(
-                            text = "LANCER LE MATCH",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        team?.players?.forEachIndexed { index, player ->
+                            PlayerCard(
+                                player = player,
+                                index = index,
+                                primaryColor = primaryColor
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Launch button
+                    if (selectedTab == 1 || teamB != null) {
+                        Button(
+                            onClick = {
+                                launchGameActivity(
+                                    context = context,
+                                    mode = mode,
+                                    forceClassic = (mode != "ar"),
+                                    teamA = teamAId,
+                                    teamB = teamBId
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "LANCER LE MATCH",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
