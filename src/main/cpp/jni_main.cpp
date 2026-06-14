@@ -214,6 +214,12 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         gArManager.setCameraFocus(
             peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ,
             playerX, playerZ, ballSpeed);
+
+        gArManager.setServerCamera(
+            peek.camera.pos[0] * kScaleX,
+            peek.camera.pos[2] * 0.1f + 0.08f,
+            peek.camera.pos[1] * kScaleZ,
+            peek.camera.fov);
     }
 
     // Get AR matrices
@@ -254,6 +260,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     // If no remote game state, apply local input + offline AI vs AI simulation
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
+        gArManager.clearServerCamera();
         static int offlineWarnCounter = 0;
         if ((offlineWarnCounter++ % 120) == 0) {
             LOGW("[jni_main] No remote game state (offline mode). "

@@ -3051,12 +3051,13 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
         const auto& b = btns[i];
         uint32_t col = b.pressed ? (b.color | 0xFF000000) : (b.color & 0xBFFFFFFF);
         drawCircle(b.cx, b.cy, b.radius, col);
-        // Power gauge ring (grows as button is held — matches GF gaugeFactor)
+        // Power gauge ring (concentric, clean, perfectly aligned around the button)
         if (b.power > 0.0f) {
-            float gaugeR = b.radius + 4.0f + b.power * 18.0f;
+            float gaugeR = b.radius + 6.0f;
+            float thickness = 2.0f + b.power * 4.0f;
             uint32_t gaugeCol = 0xFF000000 | static_cast<uint32_t>(0xFF * b.power) << 16
                                 | static_cast<uint32_t>(0xFF * (1.0f - b.power)) << 8;
-            drawRing(b.cx, b.cy, gaugeR, 4.0f, gaugeCol);
+            drawRing(b.cx, b.cy, gaugeR, thickness, gaugeCol);
         }
         // Inner symbol (simple shapes)
         if (std::strcmp(b.label, "PASS") == 0) {

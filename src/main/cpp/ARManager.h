@@ -46,6 +46,17 @@ public:
     void setCameraMode(CameraMode mode) { camMode_ = mode; }
     CameraMode getCameraMode() const { return camMode_; }
 
+    void setServerCamera(float x, float y, float z, float fov) {
+        hasServerCamera_ = true;
+        serverCamX_ = x;
+        serverCamY_ = y;
+        serverCamZ_ = z;
+        serverCamFov_ = fov;
+    }
+    void clearServerCamera() {
+        hasServerCamera_ = false;
+    }
+
     ARPose getMarkerAnchorPose() const;
     bool   isMarkerTracked()    const { if (!session_) return true; return markerTracked_; }
 
@@ -81,6 +92,12 @@ private:
     float  ballSpeed_         = 0.0f;
 
     CameraMode camMode_ = CameraMode::Classic;
+
+    bool  hasServerCamera_ = false;
+    float serverCamX_      = 0.0f;
+    float serverCamY_      = 0.0f;
+    float serverCamZ_      = 0.0f;
+    float serverCamFov_     = 38.0f;
 
     // Camera shudder state (tremblement organique)
     mutable float shudderAccumX_ = 0.0f;

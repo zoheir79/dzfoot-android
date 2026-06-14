@@ -15,18 +15,17 @@ void TouchController::setScreenSize(int width, int height) {
     joyCy_ = height - 200.0f;
     joyRadius_ = 140.0f;
 
-    // Action buttons: bottom-right, arranged in a diamond / arc
-    float btnR = 70.0f;
-    float rightX = width - 180.0f;
-    float baseY = height - 280.0f;
-    float spacing = 160.0f;
+    // Action buttons: bottom-right, arranged in a clean, ergonomic diamond
+    float btnR = 64.0f;
+    float rightX = width - 240.0f;
+    float baseY = height - 200.0f;
 
-    buttons_[0] = { "PASS",  rightX, baseY, btnR, dzfoot::BUTTON_PASS,       0xFF44AA44, false, -1, 0.0 };
-    buttons_[1] = { "SHOT",  rightX + spacing*0.6f, baseY - spacing*0.8f, btnR, dzfoot::BUTTON_SHOT,       0xFFFF4444, false, -1, 0.0 };
-    buttons_[2] = { "SPRINT",rightX - spacing*0.5f, baseY - spacing*1.2f, btnR*0.85f, dzfoot::BUTTON_SPRINT,     0xFFFFAA00, false, -1, 0.0 };
-    buttons_[3] = { "TACKLE",rightX + spacing*0.3f, baseY + spacing*0.4f, btnR*0.85f, dzfoot::BUTTON_SLIDING,    0xFF4488FF, false, -1, 0.0 };
-    buttons_[4] = { "SWITCH",rightX + spacing*1.1f, baseY + spacing*0.1f, btnR*0.7f, dzfoot::BUTTON_SWITCH_PLAYER,0xFFAAAAAA, false, -1, 0.0 };
-    buttons_[5] = { "LOB",   rightX - spacing*0.8f, baseY - spacing*0.2f, btnR*0.8f, dzfoot::BUTTON_HIGH_PASS,  0xFFAA44FF, false, -1, 0.0 };
+    buttons_[0] = { "PASS",   rightX,          baseY,           btnR,        dzfoot::BUTTON_PASS,          0xFF44AA44, false, -1, 0.0 };
+    buttons_[1] = { "SHOT",   rightX - 140.0f, baseY - 140.0f,  btnR,        dzfoot::BUTTON_SHOT,          0xFFFF4444, false, -1, 0.0 };
+    buttons_[2] = { "LOB",    rightX,          baseY - 280.0f,  btnR,        dzfoot::BUTTON_HIGH_PASS,     0xFFAA44FF, false, -1, 0.0 };
+    buttons_[3] = { "TACKLE", rightX + 140.0f, baseY - 140.0f,  btnR,        dzfoot::BUTTON_SLIDING,       0xFF4488FF, false, -1, 0.0 };
+    buttons_[4] = { "SPRINT", rightX + 140.0f, baseY - 320.0f,  btnR * 0.9f, dzfoot::BUTTON_SPRINT,         0xFFFFAA00, false, -1, 0.0 };
+    buttons_[5] = { "SWITCH", rightX - 140.0f, baseY - 320.0f,  btnR * 0.9f, dzfoot::BUTTON_SWITCH_PLAYER,  0xFFAAAAAA, false, -1, 0.0 };
     numButtons_ = 6;
     buttonsInitialized_ = true;
 }

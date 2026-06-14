@@ -95,4 +95,29 @@ void EntityInterpolator::interpolate(float renderTimeMs, dzfoot::GameStatePacket
         lerpFloat(snapA.state.players[i].vel[2], snapB.state.players[i].vel[2], t, out.players[i].vel[2]);
         lerpAngle(snapA.state.players[i].rotY, snapB.state.players[i].rotY, t, out.players[i].rotY);
     }
+
+    // Interpolate camera
+    lerpVec3(snapA.state.camera.pos, snapB.state.camera.pos, t, out.camera.pos);
+    lerpFloat(snapA.state.camera.fov, snapB.state.camera.fov, t, out.camera.fov);
+    float dot = snapA.state.camera.rot[0] * snapB.state.camera.rot[0] +
+                snapA.state.camera.rot[1] * snapB.state.camera.rot[1] +
+                snapA.state.camera.rot[2] * snapB.state.camera.rot[2] +
+                snapA.state.camera.rot[3] * snapB.state.camera.rot[3];
+    float signB = (dot < 0.0f) ? -1.0f : 1.0f;
+    float rawRot[4];
+    for (int j = 0; j < 4; ++j) {
+        rawRot[j] = snapA.state.camera.rot[j] * (1.0f - t) + snapB.state.camera.rot[j] * t * signB;
+    }
+    float len = std::sqrt(rawRot[0]*rawRot[0] + rawRot[1]*rawRot[1] + rawRot[2]*rawRot[2] + rawRot[3]*rawRot[3]);
+    if (len > 0.0001f) {
+        out.camera.rot[0] = rawRot[0] / len;
+        out.camera.rot[1] = rawRot[1] / len;
+        out.camera.rot[2] = rawRot[2] / len;
+        out.camera.rot[3] = rawRot[3] / len;
+    } else {
+        out.camera.rot[0] = snapA.state.camera.rot[0];
+        out.camera.rot[1] = snapA.state.camera.rot[1];
+        out.camera.rot[2] = snapA.state.camera.rot[2];
+        out.camera.rot[3] = snapA.state.camera.rot[3];
+    }
 }

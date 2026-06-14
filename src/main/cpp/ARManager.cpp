@@ -206,6 +206,12 @@ void ARManager::getViewMatrix(float* out) const {
         ArCamera_getViewMatrix(session_, camera_, out);
         return;
     }
+    if (hasServerCamera_ && camMode_ == CameraMode::Classic) {
+        lookAt(out, serverCamX_, serverCamY_, serverCamZ_,
+                     smoothFocusX_, 0.0f, smoothFocusZ_,
+                     0.0f, 1.0f, 0.0f);
+        return;
+    }
     // Classic Broadcast TV Camera — exact match to GameplayFootball PC
     // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
     // Default settings: zoom=0.5 height=0.3 fov=0.4 anglefactor=0.0
@@ -248,10 +254,15 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
         return;
     }
-    // Stadium spectator FOV — tighter telephoto for larger player details
-    //    38° midfield → 42° near sideline for strong zoom broadcast feel
-    float distRatio = std::abs(smoothFocusX_) / 5.25f; // 0=center, 1=sideline
-    float fovDeg = 38.0f + distRatio * 4.0f; // 38° → 42° telephoto zoom
+    float fovDeg = 38.0f;
+    if (hasServerCamera_ && camMode_ == CameraMode::Classic) {
+        fovDeg = serverCamFov_;
+    } else {
+        // Stadium spectator FOV — tighter telephoto for larger player details
+        //    38° midfield → 42° near sideline for strong zoom broadcast feel
+        float distRatio = std::abs(smoothFocusX_) / 5.25f; // 0=center, 1=sideline
+        fovDeg = 38.0f + distRatio * 4.0f; // 38° → 42° telephoto zoom
+    }
     float fov = fovDeg * 3.14159265f / 180.0f;
     float f = 1.0f / tanf(fov / 2.0f);
     float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;
