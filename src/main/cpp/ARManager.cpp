@@ -235,8 +235,8 @@ void ARManager::getViewMatrix(float* out) const {
     // 3. Camera position — inside stadium, near pitch edge
     //    Z=-3.5m = closer to action, Y=2.2m = slightly above pitch for framing
     float camX = targetX * 0.85f + shudderAccumX_;
-    float camZ = targetZ * 0.75f - 2.8f;                 // closer to sideline (zoom in)
-    float camY = 2.0f + shudderAccumY_;                  // slightly lower for immersion
+    float camZ = targetZ * 0.75f - 3.2f;                 // slightly further back from sideline for wider framing
+    float camY = 2.35f + shudderAccumY_;                  // slightly higher to increase the view angle looking down
     
     lookAt(out, camX, camY, camZ,
                  targetX, 0.0f, targetZ,                // track ball at ground level

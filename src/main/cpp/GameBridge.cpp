@@ -76,7 +76,7 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
 
     // Feed anti-lag systems
     interpolator_.addState(state_);
-    float serverTimeMs = state_.tick * (1000.0f / 60.0f);
+    float serverTimeMs = state_.tick * (1000.0f / static_cast<float>(dzfoot::kSimFrequencyHz));
     deadReckoning_.update(state_.ball, serverTimeMs);
 
     lastPacketServerTimeMs_ = serverTimeMs;

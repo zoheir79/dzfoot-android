@@ -74,7 +74,8 @@ public:
               GLuint kitTexture, GLuint shortTexture,
               int playerIndex = -1, const DirAnimClip* dirClip = nullptr,
               const AvatarConfig* avatar = nullptr,
-              const float* lightSpaceMatrix = nullptr, GLuint shadowTex = 0);
+              const float* lightSpaceMatrix = nullptr, GLuint shadowTex = 0,
+              float pitchScale = 1.0f);
     void destroy();
 
     AvatarConfig loadedCfg_;
@@ -169,6 +170,7 @@ private:
     GLuint crowdTex_ = 0;
     GLuint goalnettingTex_ = 0;
     GLuint pitchOverlayTex_ = 0;
+    GLuint adboardTex_[4] = {0, 0, 0, 0};
     // Per-team kit textures generated from MatchSetup colors
     GLuint teamKitTex_[2] = {0, 0};
     GLuint teamShortTex_[2] = {0, 0};
