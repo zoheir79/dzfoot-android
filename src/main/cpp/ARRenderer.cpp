@@ -615,11 +615,11 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
             float scale = 1.0f;
             float shiftY = 0.0f;
             if (strcmp(materialCat, "hair") == 0) {
-                scale = 1.12f;   // slight scale to clear skull without floating
-                shiftY = 0.025f; // shift up to avoid z-fighting with head mesh
+                scale = 1.05f;   // slightly scale up so it fits neck-based head alignment perfectly
+                shiftY = 0.0f;   // aligned with bone
             } else if (strcmp(materialCat, "beard") == 0) {
-                scale = 1.25f;   // modest scale for TV visibility
-                shiftY = 0.005f; // slight forward nudge
+                scale = 1.05f;   // slightly scale up
+                shiftY = 0.0f;
             }
             if (scale != 1.0f || shiftY != 0.0f) {
                 for (auto& v : prim.vertices) {
@@ -655,15 +655,13 @@ bool PlayerRig::loadModular(const AvatarConfig& cfg) {
     snprintf(bodyPath, sizeof(bodyPath), "modular/bodies/body_%s.glb", bt);
     if (!loadBody(bodyPath)) return false;
 
-    // 2. Apply height scale on root node
+    // 2. Apply height scale on root node proportionally relative to standard 1.80m height
     int rootIdx = findNodeIndex("player");
     if (rootIdx >= 0) {
-        nodes[rootIdx].bindS[1] = cfg.height;
-        // Also update the node's scale for immediate visual effect
-        float* s = nodes[rootIdx].bindS;
-        // If node already has a scale from GLB, multiply
-        // For now just set Y scale
-        // (The draw loop uses bindS to compose matrices)
+        float scaleFactor = cfg.height / 1.80f;
+        nodes[rootIdx].bindS[0] = scaleFactor;
+        nodes[rootIdx].bindS[1] = scaleFactor;
+        nodes[rootIdx].bindS[2] = scaleFactor;
     }
 
     // 3. Attach hair (if not bald)
@@ -1519,19 +1517,19 @@ uniform float u_Time;
 
 vec3 grassPitch() {
     vec3 baseGreen = vec3(0.24, 0.44, 0.16); // slightly deeper/richer green, less neon/washed out
-    vec3 darkGreen = vec3(0.18, 0.36, 0.12); // slightly richer dark stripes
+    vec3 darkGreen = vec3(0.20, 0.38, 0.13); // closer to baseGreen for subtler stripes
     vec3 wornGreen = vec3(0.35, 0.44, 0.24); // trampled grass near center
     vec3 lineWhite = vec3(0.95, 0.95, 0.92);
 
     vec2 p = v_LocalPos.xz;
     vec2 n = p / max(u_PitchHalf, vec2(0.001));
 
-    // Mowing stripes (8 stripes per half for broadcast look) — anti-aliased with fwidth
+    // Mowing stripes — very subtle so they never look like repeating tiles
     float stripeFreq = n.x * 8.0;
     float stripeVal = fract(stripeFreq);
     float fw = fwidth(stripeFreq);
     float stripe = smoothstep(0.5 - fw, 0.5 + fw, stripeVal);
-    vec3 grass = mix(baseGreen, darkGreen, stripe);
+    vec3 grass = mix(baseGreen, darkGreen, stripe * 0.30); // 30% contrast only
 
     // ─── Procedural grass blade noise + micro-irregularity (breaks up any remaining moiré) ───
     float hash = fract(sin(dot(floor(p * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -1751,7 +1749,7 @@ float sampleShadow(vec4 shadowCoord) {
         for (int y = -1; y <= 1; ++y) {
             vec2 offset = vec2(float(x), float(y)) * texelSize;
             vec4 samp = texture(u_ShadowMap, proj.xy + offset);
-            float closest = samp.r + samp.g / 256.0;
+            float closest = samp.r + samp.g / 255.0;
             shadow += (proj.z > closest + 0.0003) ? 0.0 : 1.0;
         }
     }
@@ -1801,9 +1799,15 @@ void main() {
     float specIntensity = 0.5;
 
     if (u_MaterialType == 1) {
-        // Terrain: pure procedural grass — no texture blending to avoid visible tile grid
+        // Terrain: blend procedural grass with highly-tiled seamless grass texture for realistic micro-details
         N = grassNormal();
-        baseColor = grassPitch();
+        vec3 proceduralGrass = grassPitch();
+        if (u_UseTexture > 0.5) {
+            vec3 texColor = texture(u_BaseTexture, v_TexCoord * 24.0).rgb;
+            baseColor = proceduralGrass * mix(vec3(1.0), texColor * 1.4, 0.35);
+        } else {
+            baseColor = proceduralGrass;
+        }
         roughness = 0.95; // matte grass
         metallic = 0.0;
         specPower = 8.0;
@@ -1811,12 +1815,14 @@ void main() {
 
         // Roof + floodlight shadow
         if (u_UseOverlay > 0.5) {
-            // Sample the original GF overlay with flipped Y (OpenGL vs SDL image orientation)
-            vec2 overlayUV = vec2(v_TexCoord.x, 1.0 - v_TexCoord.y);
+            // Compute non-tiling UV coordinates mapping exactly once over the pitch [0, 1]
+            vec2 pitchUV = v_LocalPos.xz / (u_PitchHalf * 2.0) + 0.5;
+            vec2 overlayUV = vec2(pitchUV.x, 1.0 - pitchUV.y);
             vec4 overlaySample = texture(u_OverlayTexture, overlayUV);
-            // Original GF formula: base * (1 - alpha) + overlay_rgb * alpha
-            // This preserves the procedural grass where alpha=0 and blends the pre-baked shadow/AO where alpha>0
-            baseColor = mix(baseColor, overlaySample.rgb, overlaySample.a);
+            // Filter out blurry low-resolution white pitch lines from overlay.png to avoid double lines.
+            // Keep dark shadows and AO, but discard bright white pixels representing overlay lines.
+            float isOverlayLine = step(0.55, overlaySample.r) * step(0.55, overlaySample.g) * step(0.55, overlaySample.b);
+            baseColor = mix(baseColor, overlaySample.rgb, overlaySample.a * (1.0 - isOverlayLine));
         } else {
             float roofShadow = smoothstep(-8.0, 0.0, v_WorldPos.z) * smoothstep(8.0, 0.0, v_WorldPos.z);
             roofShadow *= smoothstep(-12.0, -4.0, v_WorldPos.x) * 0.35;
@@ -1976,11 +1982,11 @@ static const char* SHADOW_FRAG = R"(#version 300 es
 precision mediump float;
 out vec4 outColor;
 void main() {
-    // Pack depth into RG channels (16-bit precision from two 8-bit channels)
+    // Standard precise 16-bit depth encoding into 8-bit normalized RG channels
     float d = gl_FragCoord.z;
-    float low = fract(d * 256.0);
-    float high = floor(d * 256.0) / 256.0;
-    outColor = vec4(high, low, 0.0, 1.0);
+    float g = fract(d * 255.0);
+    float r = d - g / 255.0;
+    outColor = vec4(r, g, 0.0, 1.0);
 }
 )";
 
@@ -2456,7 +2462,9 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     float extentX = pitchHalf_[0] * 1.05f;
     float extentZ = pitchHalf_[1] * 1.05f;
     // Tight near/far planes improve depth precision (less shadow acne, visible foot shadows)
-    mat4Ortho(lightProj, -extentX, extentX, -extentZ, extentZ, 1.0f, 45.0f * ratio);
+    // Far must cover distance from light to farthest pitch corner (~99m at ratio=1)
+    // so the terrain is NOT clipped out of the shadow map.
+    mat4Ortho(lightProj, -extentX, extentX, -extentZ, extentZ, 1.0f, 120.0f * ratio);
     mat4Mul(lightProj, lightView, lightSpaceMatrix_);
 
     renderShadowMap(playerPositions, numPlayers, playerAnims, playerVels, playerRotY,
@@ -2541,9 +2549,9 @@ void ARRenderer::renderStaticObjects(const float* viewProj, const float* lightSp
         bool hasOverlay = false;
         if (node.name == "pitch") {
             glUniform3f(colLoc, 1.0f, 1.0f, 1.0f);
-            materialType = 1; // pitch: beta2 grass texture + pre-baked original European stadium roof shadow
+            materialType = 1; // pitch
             boundTex = pitchTex_;
-            
+
             if (pitchOverlayTex_ && overlayTexLoc >= 0 && useOverlayLoc >= 0) {
                 glActiveTexture(GL_TEXTURE6);
                 glBindTexture(GL_TEXTURE_2D, pitchOverlayTex_);
@@ -2685,6 +2693,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
     const float scaleX  = pitchHalf_[0] * 0.1f;
     const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+    float pitchScale = pitchHalf_[0] / 52.5f;
 
     for (int i = 0; i < numPlayers; ++i) {
         // --- Exploit server flags ---
@@ -2695,7 +2704,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
         float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
         float gh = playerPositions[i * 3 + 2];
-        float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
+        float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, gw * scaleZ };
 
         // Heading: Z-axis matches server Y-axis, so mapping is direct
         // playerVels[i*3+0..1] = unit direction vector (from server dir[])
@@ -2862,7 +2871,14 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
     glViewport(0, 0, kShadowMapSize, kShadowMapSize);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
+
+    // Save previous clear color and clear shadow color texture to maximum depth (R=1.0, G=1.0)
+    GLfloat prevClearColor[4];
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClearColor);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearColor(prevClearColor[0], prevClearColor[1], prevClearColor[2], prevClearColor[3]);
+
     Shader::use(shadowShader_);
     GLint mvpLoc = glGetUniformLocation(shadowShader_, "u_ModelViewProj");
 
@@ -2872,6 +2888,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
         if (!node.staticMesh.hasData()) continue;
+        if (node.name == "pitch" || node.name == "stadium") continue; // SKIP terrain and stadium (they don't cast shadows on the field)
         float mvp[16];
         mat4Mul(lightSpaceMatrix_, node.worldMatrix, mvp);
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
@@ -2885,6 +2902,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
         constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX  = pitchHalf_[0] * 0.1f;
         const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+        float pitchScale = pitchHalf_[0] / 52.5f;
         float teamColor[3] = {0.0f, 0.0f, 0.0f};
 
         for (int i = 0; i < numPlayers; ++i) {
@@ -2894,7 +2912,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
             float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[i * 3 + 2];
-            float worldPos[3] = { gx * scaleX, gh * 0.1f + 0.15f, gw * scaleZ };
+            float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, gw * scaleZ };
 
             float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
             float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
@@ -3103,11 +3121,12 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
             constexpr float kEnvYHalf = 0.4306f;
             float scaleX  = pitchHalf_[0] * 0.1f;
             float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+            float pitchScale = pitchHalf_[0] / 52.5f;
             float gx = clampFloat(playerPositions[activeIdx * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[activeIdx * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[activeIdx * 3 + 2];
             float wx = gx * scaleX;
-            float wy = gh * 0.1f + 0.15f;
+            float wy = gh * 0.1f * pitchScale + 0.14f * pitchScale;
             float wz = gw * scaleZ;
             // Project world position to screen
             float clip[4];
