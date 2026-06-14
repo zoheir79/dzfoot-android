@@ -233,10 +233,10 @@ void ARManager::getViewMatrix(float* out) const {
     shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
     
     // 3. Camera position — inside stadium, near pitch edge
-    //    Z=-3.5m = closer to action, Y=2.2m = slightly above pitch for framing
+    //    Z=-2.6m = closer to action for zoomed-in broadcast framing, Y=2.15m
     float camX = targetX * 0.85f + shudderAccumX_;
-    float camZ = targetZ * 0.75f - 3.2f;                 // slightly further back from sideline for wider framing
-    float camY = 2.35f + shudderAccumY_;                  // slightly higher to increase the view angle looking down
+    float camZ = targetZ * 0.75f - 2.6f;                 // closer to sideline for zoomed-in broadcast
+    float camY = 2.15f + shudderAccumY_;                  // slightly lower for tighter framing
     
     lookAt(out, camX, camY, camZ,
                  targetX, 0.0f, targetZ,                // track ball at ground level
@@ -249,9 +249,9 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
         return;
     }
     // Stadium spectator FOV — tighter telephoto for larger player details
-    //    45° midfield → 50° near sideline for immersive close-up broadcast feel
+    //    38° midfield → 42° near sideline for strong zoom broadcast feel
     float distRatio = std::abs(smoothFocusX_) / 5.25f; // 0=center, 1=sideline
-    float fovDeg = 45.0f + distRatio * 5.0f; // 45° → 50° telephoto zoom
+    float fovDeg = 38.0f + distRatio * 4.0f; // 38° → 42° telephoto zoom
     float fov = fovDeg * 3.14159265f / 180.0f;
     float f = 1.0f / tanf(fov / 2.0f);
     float aspect = (displayHeight_ > 0) ? (float)displayWidth_ / (float)displayHeight_ : 16.0f / 9.0f;

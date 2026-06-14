@@ -615,11 +615,11 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
             float scale = 1.0f;
             float shiftY = 0.0f;
             if (strcmp(materialCat, "hair") == 0) {
-                scale = 1.04f;   // slightly scale up hair to prevent any z-fighting / skull intersection
-                shiftY = 0.002f; // slightly shift up
+                scale = 1.12f;   // slight scale to clear skull without floating
+                shiftY = 0.025f; // shift up to avoid z-fighting with head mesh
             } else if (strcmp(materialCat, "beard") == 0) {
-                scale = 1.4f;
-                shiftY = -0.02f;
+                scale = 1.25f;   // modest scale for TV visibility
+                shiftY = 0.005f; // slight forward nudge
             }
             if (scale != 1.0f || shiftY != 0.0f) {
                 for (auto& v : prim.vertices) {
@@ -672,7 +672,7 @@ bool PlayerRig::loadModular(const AvatarConfig& cfg) {
         const char* hs = hair_names[cfg.hairStyle % 6];
         char hairPath[128];
         snprintf(hairPath, sizeof(hairPath), "modular/parts/hair_%s.glb", hs);
-        attachPart(hairPath, "head", "hair");
+        attachPart(hairPath, "neck", "hair");
     }
 
     // 4. Attach beard (if not none)
@@ -953,7 +953,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.11f * pitchScale; // proportional to pitch size (~1.8m player on 105m pitch)
+    const float scaleVal = 0.14f * pitchScale; // larger players for broadcast visibility (~2.3m proportional on virtual pitch)
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -980,6 +980,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     static GLint fogDensityLoc = -1;
     static GLint matLoc = -1;
     static GLint timeLoc = -1;
+    static GLint blobShadowLoc = -1;
     if (shader != lastShader) {
         mvpLoc = glGetUniformLocation(shader, "u_ModelViewProj");
         modelLoc = glGetUniformLocation(shader, "u_ModelMatrix");
@@ -991,10 +992,14 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         fogDensityLoc = glGetUniformLocation(shader, "u_FogDensity");
         matLoc = glGetUniformLocation(shader, "u_MaterialType");
         timeLoc = glGetUniformLocation(shader, "u_Time");
+        blobShadowLoc = glGetUniformLocation(shader, "u_BlobShadow");
         lastShader = shader;
     }
 
     // Send shadow / fog / time uniforms once per player draw
+    if (blobShadowLoc >= 0) {
+        glUniform1f(blobShadowLoc, 0.0f);
+    }
     if (lightSpaceLoc >= 0 && lightSpaceMatrix) {
         glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
     }
@@ -1050,7 +1055,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             bool forceColor = false; // if true, override partColor with solid fallback
             int partMaterialType = 0; // 0=default, 1=skin/face/head, 2=hair/cheveux, 3=beard
             if (matContains("skin") || matContains("face") || matContains("head")) {
-                partMaterialType = 1;
+                partMaterialType = 5; // skin in STATIC_FRAG
                 if (avatar && avatar->skinColor < 7 && skinTexs[avatar->skinColor]) {
                     boundTex = skinTexs[avatar->skinColor];
                 } else {
@@ -1062,7 +1067,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                     forceColor = true;
                 }
             } else if (matContains("hair") || matContains("cheveux")) {
-                partMaterialType = 2;
+                partMaterialType = 6; // hair in STATIC_FRAG
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
                 } else if (hairTexs[0]) {
@@ -1073,7 +1078,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                     forceColor = true;
                 }
             } else if (matContains("beard")) {
-                partMaterialType = 3;
+                partMaterialType = 7; // beard in STATIC_FRAG
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
                 } else if (hairTexs[0]) {
@@ -1163,7 +1168,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             };
             int partMaterialType = 0; // 0=default, 2=hair, 3=beard
             if (attContains("hair") || attContains("cheveux")) {
-                partMaterialType = 2;
+                partMaterialType = 6; // hair in STATIC_FRAG
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
                 } else if (hairTexs[0]) {
@@ -1173,7 +1178,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                     partColor[0] = 0.05f; partColor[1] = 0.05f; partColor[2] = 0.05f;
                 }
             } else if (attContains("beard")) {
-                partMaterialType = 3;
+                partMaterialType = 7; // beard in STATIC_FRAG
                 if (avatar && avatar->hairColor < 8 && hairTexs[avatar->hairColor]) {
                     boundTex = hairTexs[avatar->hairColor];
                 } else if (hairTexs[0]) {
@@ -1445,8 +1450,8 @@ void main() {
     vec3 outCol = clamp((finalColor * (a * finalColor + b)) / (finalColor * (c * finalColor + d) + e), 0.0, 1.0);
 
     // ─── Bloom (extract bright areas, nice soft glow without brightening) ─────────
-    vec3 bloom = max(outCol - vec3(0.75), vec3(0.0)) * vec3(0.18, 0.15, 0.10);
-    outCol = outCol * 0.95 + bloom;
+    vec3 bloom = max(outCol - vec3(0.60), vec3(0.0)) * vec3(0.25, 0.20, 0.14);
+    outCol = outCol * 0.92 + bloom;
 
     // ─── Vignette + chromatic aberration hint ─────────────────
     // (only in post, not per-object, skip for performance)
@@ -1546,9 +1551,9 @@ vec3 grassPitch() {
     }
     grass = mix(grass, wornGreen, centerWear + boxWear);
 
-    // ─── Wetness sheen (simplified: darker + specular boost in low areas)
-    float wetness = smoothstep(-0.5, 0.5, sin(p.x * 0.3) + sin(p.y * 0.25)) * 0.15;
-    grass -= vec3(wetness * 0.08);
+    // Very subtle high-frequency noise (no floor = no visible square blocks)
+    float fineHash = fract(sin(dot(p * 3.7 + vec2(1.3, 2.1), vec2(17.13, 43.79))) * 23147.1);
+    grass += (fineHash - 0.5) * 0.015;
 
     // Pitch markings — standard FIFA dimensions in meters
     float lineW = 0.55; // slightly thinner for broadcast
@@ -1738,18 +1743,19 @@ float sampleShadow(vec4 shadowCoord) {
     vec3 proj = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
-    // 2x2 PCF (Percentage Closer Filtering) for soft, realistic player shadows
-    // Bias reduced to 0.0005 to avoid shadow acne while keeping foot shadows visible
-    vec2 texelSize = vec2(1.0 / 2048.0);
+    // 3x3 PCF with 4096 shadow map for crisp, professional player silhouettes
+    // Unpack depth from RG channels (16-bit precision)
+    vec2 texelSize = vec2(1.0 / 4096.0);
     float shadow = 0.0;
-    for (int x = -1; x <= 1; x += 2) {
-        for (int y = -1; y <= 1; y += 2) {
-            vec2 offset = vec2(float(x), float(y)) * texelSize * 0.5;
-            float closest = texture(u_ShadowMap, proj.xy + offset).r;
-            shadow += (proj.z > closest + 0.0005) ? 0.15 : 1.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            vec2 offset = vec2(float(x), float(y)) * texelSize;
+            vec4 samp = texture(u_ShadowMap, proj.xy + offset);
+            float closest = samp.r + samp.g / 256.0;
+            shadow += (proj.z > closest + 0.0003) ? 0.0 : 1.0;
         }
     }
-    return shadow * 0.25;
+    return shadow / 9.0;
 }
 
 vec3 acesTonemap(vec3 x) {
@@ -1762,7 +1768,7 @@ vec3 acesTonemap(vec3 x) {
 }
 
 vec3 applyFog(vec3 color, float dist) {
-    vec3 fogColor = vec3(0.55, 0.60, 0.65);
+    vec3 fogColor = vec3(0.62, 0.66, 0.72); // slightly warmer, brighter atmospheric fog
     float fogAmount = 1.0 - exp(-dist * u_FogDensity);
     return mix(color, fogColor, fogAmount);
 }
@@ -1795,14 +1801,9 @@ void main() {
     float specIntensity = 0.5;
 
     if (u_MaterialType == 1) {
-        // Terrain: use perturbed normal for anisotropic grass lighting
+        // Terrain: pure procedural grass — no texture blending to avoid visible tile grid
         N = grassNormal();
         baseColor = grassPitch();
-        if (u_UseTexture > 0.5) {
-            // High-res tiled grass detail up close + blend with procedural baseColor
-            vec3 grassDetail = texture(u_BaseTexture, v_TexCoord * 24.0).rgb;
-            baseColor = mix(baseColor, baseColor * grassDetail * 2.0, 0.50);
-        }
         roughness = 0.95; // matte grass
         metallic = 0.0;
         specPower = 8.0;
@@ -1847,6 +1848,36 @@ void main() {
         metallic = 0.0;
         specPower = 48.0;
         specIntensity = 0.6;
+    } else if (u_MaterialType == 5) {
+        // Player skin / face / head
+        if (u_UseTexture > 0.5) {
+            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        } else {
+            baseColor = u_Color;
+        }
+        roughness = 0.45;
+        specPower = 24.0;
+        specIntensity = 0.35;
+    } else if (u_MaterialType == 6) {
+        // Player hair
+        if (u_UseTexture > 0.5) {
+            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        } else {
+            baseColor = u_Color;
+        }
+        roughness = 0.30;
+        specPower = 48.0;
+        specIntensity = 0.55;
+    } else if (u_MaterialType == 7) {
+        // Player beard (same as hair, slightly rougher)
+        if (u_UseTexture > 0.5) {
+            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
+        } else {
+            baseColor = u_Color;
+        }
+        roughness = 0.40;
+        specPower = 32.0;
+        specIntensity = 0.40;
     } else if (u_MaterialType == 4) {
         baseColor = stadiumShader();
         roughness = 0.9;
@@ -1874,9 +1905,9 @@ void main() {
     float amb = 0.22; // lowered from 0.35
     float light = diff1 * 0.95 + diff2 * 0.22 + spotDiff * 0.30 + ledDiff + amb; // adjusted slightly to avoid overexposure
 
-    // Shadow mapping
+    // Shadow mapping (very strong contrast for visible player silhouettes)
     float shadow = sampleShadow(v_ShadowCoord);
-    light *= shadow;
+    light = mix(light * 0.05, light, shadow);
 
     // Specular Blinn-Phong
     vec3 H = normalize(L1 + viewDir);
@@ -1908,8 +1939,8 @@ void main() {
     vec3 tm = acesTonemap(lit);
 
     // ─── Bloom (extract bright areas, nice soft glow without brightening) ─────────
-    vec3 bloom = max(tm - vec3(0.75), vec3(0.0)) * vec3(0.18, 0.15, 0.10);
-    vec3 finalColor = tm * 0.95 + bloom;
+    vec3 bloom = max(tm - vec3(0.60), vec3(0.0)) * vec3(0.25, 0.20, 0.14);
+    vec3 finalColor = tm * 0.92 + bloom;
 
     // ─── Vignette (screen-space) ────────────────────────────────
     // Approximate using world distance from center (works for all materials)
@@ -1921,7 +1952,7 @@ void main() {
     float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 + u_Time * 30.0) - 0.5;
     finalColor += grain * 0.012;
     float lum = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    finalColor = mix(vec3(lum), finalColor, 1.32);
+    finalColor = mix(vec3(lum), finalColor, 1.34);
 
     // ─── Fog ────────────────────────────────────────────────────
     finalColor = applyFog(finalColor, length(v_WorldPos));
@@ -1945,7 +1976,11 @@ static const char* SHADOW_FRAG = R"(#version 300 es
 precision mediump float;
 out vec4 outColor;
 void main() {
-    outColor = vec4(1.0);
+    // Pack depth into RG channels (16-bit precision from two 8-bit channels)
+    float d = gl_FragCoord.z;
+    float low = fract(d * 256.0);
+    float high = floor(d * 256.0) / 256.0;
+    outColor = vec4(high, low, 0.0, 1.0);
 }
 )";
 
@@ -2199,18 +2234,31 @@ void ARRenderer::init() {
     LOGI("[initTiming] player_base.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
 
     // 6. Shadow map FBO
+    // Use RGBA color texture for depth encoding (100% portable on mobile drivers)
     glGenFramebuffers(1, &shadowFbo_);
-    glGenTextures(1, &shadowTex_);
-    glBindTexture(GL_TEXTURE_2D, shadowTex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, kShadowMapSize, kShadowMapSize,
-                  0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, nullptr);
+    glGenTextures(1, &shadowColorTex_);
+    glBindTexture(GL_TEXTURE_2D, shadowColorTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kShadowMapSize, kShadowMapSize,
+                  0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenTextures(1, &shadowTex_);
+    glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, kShadowMapSize, kShadowMapSize,
+                  0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, shadowColorTex_, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
-    glDrawBuffers(0, nullptr); // No color output
+    GLenum drawBuf = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &drawBuf);
     GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
         LOGE("Shadow FBO incomplete: 0x%x", fboStatus);
@@ -2237,6 +2285,7 @@ void ARRenderer::destroy() {
     uiShader_ = 0;
     if (shadowFbo_) { glDeleteFramebuffers(1, &shadowFbo_); shadowFbo_ = 0; }
     if (shadowTex_) { glDeleteTextures(1, &shadowTex_); shadowTex_ = 0; }
+    if (shadowColorTex_) { glDeleteTextures(1, &shadowColorTex_); shadowColorTex_ = 0; }
     if (quadVbo_) { glDeleteBuffers(1, &quadVbo_); quadVbo_ = 0; }
     if (uvVbo_) { glDeleteBuffers(1, &uvVbo_); uvVbo_ = 0; }
     if (uiVbo_) { glDeleteBuffers(1, &uiVbo_); uiVbo_ = 0; }
@@ -2401,11 +2450,13 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     float eyeZ = 22.5f * ratio;
     mat4LookAt(lightView, eyeX, eyeY, eyeZ, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
     
-    // Scale orthographic shadow box boundaries to perfectly cover the entire pitch size (including players on sideline)
-    float extentX = pitchHalf_[0] * 1.2f;
-    float extentZ = pitchHalf_[1] * 1.2f;
+    // Tight orthographic shadow box: cover just the pitch + minimal margin
+    // This concentrates all 4096 shadow-map pixels on the playable area
+    // for much higher per-pixel resolution on player silhouettes (~5x better)
+    float extentX = pitchHalf_[0] * 1.05f;
+    float extentZ = pitchHalf_[1] * 1.05f;
     // Tight near/far planes improve depth precision (less shadow acne, visible foot shadows)
-    mat4Ortho(lightProj, -extentX, extentX, -extentZ, extentZ, 1.0f, 70.0f * ratio);
+    mat4Ortho(lightProj, -extentX, extentX, -extentZ, extentZ, 1.0f, 45.0f * ratio);
     mat4Mul(lightProj, lightView, lightSpaceMatrix_);
 
     renderShadowMap(playerPositions, numPlayers, playerAnims, playerVels, playerRotY,
@@ -2455,7 +2506,7 @@ void ARRenderer::renderStaticObjects(const float* viewProj, const float* lightSp
     }
     if (shadowMapLoc >= 0) {
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, shadowTex_);
+        glBindTexture(GL_TEXTURE_2D, shadowColorTex_);
         glUniform1i(shadowMapLoc, 1);
     }
 
@@ -2570,7 +2621,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         if (fogDensityLoc >= 0) glUniform1f(fogDensityLoc, 0.025f);
         if (shadowMapLoc >= 0) {
             glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, shadowTex_);
+            glBindTexture(GL_TEXTURE_2D, shadowColorTex_);
             glUniform1i(shadowMapLoc, 1);
         }
         // Map GF env coords to 3D scene units derived from the ACTUAL pitch GLB.
@@ -2609,6 +2660,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     GLint lightSpaceLoc = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
     GLint shadowMapLoc = glGetUniformLocation(staticShader_, "u_ShadowMap");
     GLint fogDensityLoc = glGetUniformLocation(staticShader_, "u_FogDensity");
+    GLint blobShadowLoc = glGetUniformLocation(staticShader_, "u_BlobShadow");
+    if (blobShadowLoc >= 0) glUniform1f(blobShadowLoc, 0.0f);
     glUniform1i(matLoc, 0); // force default color mode so ballPattern is NOT used
     glUniform1f(useTexLoc, 0.0f);
     if (lightSpaceLoc >= 0) glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
@@ -2785,8 +2838,9 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                   staticShader_, skinnedShader_, teamColor,
                   playerKitTex, playerShortTex,
                   i, dirClip, &cfg,
-                  lightSpaceMatrix_, shadowTex_,
+                  lightSpaceMatrix_, shadowColorTex_,
                   pitchHalf_[0] / 52.5f);
+
         if (shouldLog && i == 0) {
             LOGI("[renderPlayers] P%d num=%d drawn at (%.2f,%.2f,%.2f) rotY=%.2f kitTex=%u", i,
                  (int)cfg.playerNumber, worldPos[0], worldPos[1], worldPos[2], rotY, playerKitTex);
@@ -2806,17 +2860,15 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
 
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
     glViewport(0, 0, kShadowMapSize, kShadowMapSize);
-    glClear(GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    // Cull front faces to avoid peter-panning (standard shadow mapping trick)
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);
-
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     Shader::use(shadowShader_);
     GLint mvpLoc = glGetUniformLocation(shadowShader_, "u_ModelViewProj");
 
-    // Render static objects into shadow map
+    // Render static objects into shadow map (cull back faces: terrain face-up gets drawn)
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
         if (!node.staticMesh.hasData()) continue;
@@ -2826,7 +2878,9 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
         node.staticMesh.draw();
     }
 
-    // Render player dynamic characters into shadow map for perfect dynamic shadows
+    // Render player dynamic characters into shadow map
+    // Disable culling: player_base.glb uses open-ended limb meshes that create holes with GL_FRONT
+    glDisable(GL_CULL_FACE);
     if (playerPositions) {
         constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX  = pitchHalf_[0] * 0.1f;

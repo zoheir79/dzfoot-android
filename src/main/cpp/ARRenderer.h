@@ -203,8 +203,9 @@ private:
                   const uint8_t* playerFlags, const uint8_t* playerTeams);
 
     GLuint shadowFbo_ = 0;
-    GLuint shadowTex_ = 0;
+    GLuint shadowTex_ = 0;       // depth attachment for shadow FBO
+    GLuint shadowColorTex_ = 0;  // RGBA shadow map sampled in main pass (portable depth encoding)
     GLuint shadowShader_ = 0;
-    static constexpr int kShadowMapSize = 2048;
+    static constexpr int kShadowMapSize = 4096;
     float lightSpaceMatrix_[16];
 };
