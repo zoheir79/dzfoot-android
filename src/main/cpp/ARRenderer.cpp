@@ -2388,7 +2388,7 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     ARPose anchorPose = ar.getMarkerAnchorPose();
 
     float fallbackAnchor[16];
-    if (anchorPose.valid) {
+    if (ar.getCameraMode() == CameraMode::AR && anchorPose.valid) {
         std::memcpy(fallbackAnchor, anchorPose.matrix, 16 * sizeof(float));
     } else {
         // Fixed full-pitch TV view: identity anchor (no ball tracking) so the

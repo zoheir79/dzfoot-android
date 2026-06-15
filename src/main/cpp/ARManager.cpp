@@ -238,11 +238,11 @@ void ARManager::getViewMatrix(float* out) const {
     shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
     shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
     
-    // 3. Camera position — inside stadium, near pitch edge
-    //    Z=-2.6m = closer to action for zoomed-in broadcast framing, Y=2.15m
+    // 3. Camera position — outside of pitch boundaries (sideline is at -7.896m)
+    //    Z=-11.0m = outside the sideline for beautiful broadcast TV spectator framing, Y=5.2m
     float camX = targetX * 0.85f + shudderAccumX_;
-    float camZ = targetZ * 0.75f - 2.6f;                 // closer to sideline for zoomed-in broadcast
-    float camY = 2.15f + shudderAccumY_;                  // slightly lower for tighter framing
+    float camZ = targetZ * 0.75f - 11.0f;                 // positioned outside the sideline
+    float camY = 5.20f + shudderAccumY_;                  // elevated for beautiful broadcast framing
     
     lookAt(out, camX, camY, camZ,
                  targetX, 0.0f, targetZ,                // track ball at ground level
