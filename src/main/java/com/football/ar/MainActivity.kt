@@ -292,6 +292,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 }
                 val token = json.getString("token")
 
+                Log.i("MainActivity", "Match created! Room: $roomId, Raw LK URL: $rawLkUrl, Resolved WS URL: $lkUrl, Token Length: ${token.length}")
+
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)

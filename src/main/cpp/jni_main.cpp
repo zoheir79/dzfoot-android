@@ -256,10 +256,15 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     // Always render game (use fallback view if marker not tracked)
     // Use interpolated state for smooth 20 Hz display
-    dzfoot::GameStatePacket gs = gGameBridge.getInterpolatedState();
+    static dzfoot::GameStatePacket offlineState;
+    static bool offlineStateInitialized = false;
 
-    // If no remote game state, apply local input + offline AI vs AI simulation
+    dzfoot::GameStatePacket gs;
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
+        if (!offlineStateInitialized) {
+            offlineState = gGameBridge.currentState();
+            offlineStateInitialized = true;
+        }
         gArManager.clearServerCamera();
         static int offlineWarnCounter = 0;
         if ((offlineWarnCounter++ % 120) == 0) {
@@ -271,27 +276,27 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         gTouchController.applyCameraRotation(gCamFwdX, gCamFwdZ);
         const dzfoot::PlayerInputPacket& input = gTouchController.getInput();
         float speed = 0.05f;
-        gs.players[0].pos[0] += input.dirX * speed;
-        gs.players[0].pos[1] += input.dirZ * speed;
-        gs.players[0].vel[0] = input.dirX * speed;
-        gs.players[0].vel[1] = input.dirZ * speed;
-        gs.players[0].vel[2] = 0.0f;
+        offlineState.players[0].pos[0] += input.dirX * speed;
+        offlineState.players[0].pos[1] += input.dirZ * speed;
+        offlineState.players[0].vel[0] = input.dirX * speed;
+        offlineState.players[0].vel[1] = input.dirZ * speed;
+        offlineState.players[0].vel[2] = 0.0f;
         if (std::fabs(input.dirX) > 0.001f || std::fabs(input.dirZ) > 0.001f) {
-            gs.players[0].rotY = std::atan2(input.dirX, input.dirZ);
-            gs.players[0].anim = input.buttons & dzfoot::BUTTON_SPRINT ? dzfoot::ANIM_SPRINT : dzfoot::ANIM_WALK;
+            offlineState.players[0].rotY = std::atan2(input.dirX, input.dirZ);
+            offlineState.players[0].anim = input.buttons & dzfoot::BUTTON_SPRINT ? dzfoot::ANIM_SPRINT : dzfoot::ANIM_WALK;
         } else {
-            gs.players[0].anim = dzfoot::ANIM_IDLE;
+            offlineState.players[0].anim = dzfoot::ANIM_IDLE;
         }
-        if (gs.players[0].pos[0] < -1.0f) gs.players[0].pos[0] = -1.0f;
-        if (gs.players[0].pos[0] >  1.0f) gs.players[0].pos[0] = 1.0f;
-        if (gs.players[0].pos[1] < -0.43f) gs.players[0].pos[1] = -0.43f;
-        if (gs.players[0].pos[1] >  0.43f) gs.players[0].pos[1] = 0.43f;
+        if (offlineState.players[0].pos[0] < -1.0f) offlineState.players[0].pos[0] = -1.0f;
+        if (offlineState.players[0].pos[0] >  1.0f) offlineState.players[0].pos[0] = 1.0f;
+        if (offlineState.players[0].pos[1] < -0.43f) offlineState.players[0].pos[1] = -0.43f;
+        if (offlineState.players[0].pos[1] >  0.43f) offlineState.players[0].pos[1] = 0.43f;
 
         // Ensure player 0 is active + designated so camera follows and renderer shows them
-        gs.players[0].flags |= 0x05; // bit0=is_active, bit2=designated
+        offlineState.players[0].flags |= 0x05; // bit0=is_active, bit2=designated
         // Activate all other players so they render too
-        for (int i = 1; i < 22; ++i) gs.players[i].flags |= 0x01;
-        for (int i = 0; i < 3; ++i)  gs.officials[i].flags |= 0x01;
+        for (int i = 1; i < 22; ++i) offlineState.players[i].flags |= 0x01;
+        for (int i = 0; i < 3; ++i)  offlineState.officials[i].flags |= 0x01;
 
         // Formation tables (static for reuse in AI sim)
         static const float t0x[11] = {-0.90f,-0.70f,-0.70f,-0.70f,-0.70f,
@@ -309,24 +314,24 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
         // One-time formation setup
         for (int i = 0; i < 11; ++i) {
-            if (gs.players[i].pos[0] == 0.0f && gs.players[i].pos[1] == 0.0f) {
-                gs.players[i].pos[0] = t0x[i];
-                gs.players[i].pos[1] = t0y[i];
-                gs.players[i].team = 0;
-                gs.players[i].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
+            if (offlineState.players[i].pos[0] == 0.0f && offlineState.players[i].pos[1] == 0.0f) {
+                offlineState.players[i].pos[0] = t0x[i];
+                offlineState.players[i].pos[1] = t0y[i];
+                offlineState.players[i].team = 0;
+                offlineState.players[i].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
             }
             int j = 11 + i;
-            if (gs.players[j].pos[0] == 0.0f && gs.players[j].pos[1] == 0.0f) {
-                gs.players[j].pos[0] = t1x[i];
-                gs.players[j].pos[1] = t1y[i];
-                gs.players[j].team = 1;
-                gs.players[j].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
+            if (offlineState.players[j].pos[0] == 0.0f && offlineState.players[j].pos[1] == 0.0f) {
+                offlineState.players[j].pos[0] = t1x[i];
+                offlineState.players[j].pos[1] = t1y[i];
+                offlineState.players[j].team = 1;
+                offlineState.players[j].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
             }
         }
         // Officials
-        gs.officials[0].pos[0] = 0.0f;  gs.officials[0].pos[1] = 0.45f; gs.officials[0].team = 2;
-        gs.officials[1].pos[0] = 0.0f;  gs.officials[1].pos[1] = -0.45f; gs.officials[1].team = 2;
-        gs.officials[2].pos[0] = 0.0f;  gs.officials[2].pos[1] = 0.0f; gs.officials[2].team = 2;
+        offlineState.officials[0].pos[0] = 0.0f;  offlineState.officials[0].pos[1] = 0.45f; offlineState.officials[0].team = 2;
+        offlineState.officials[1].pos[0] = 0.0f;  offlineState.officials[1].pos[1] = -0.45f; offlineState.officials[1].team = 2;
+        offlineState.officials[2].pos[0] = 0.0f;  offlineState.officials[2].pos[1] = 0.0f; offlineState.officials[2].team = 2;
 
         // Offline AI vs AI simulation: players patrol around formation spots
         static float simTime = 0.0f;
@@ -345,28 +350,33 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
             float targetY = baseY + patrolY;
 
             // Smooth interpolation toward target
-            float dx = targetX - gs.players[i].pos[0];
-            float dy = targetY - gs.players[i].pos[1];
-            gs.players[i].vel[0] = dx * 0.04f; // frame delta
-            gs.players[i].vel[1] = dy * 0.04f;
-            gs.players[i].pos[0] += gs.players[i].vel[0];
-            gs.players[i].pos[1] += gs.players[i].vel[1];
+            float dx = targetX - offlineState.players[i].pos[0];
+            float dy = targetY - offlineState.players[i].pos[1];
+            offlineState.players[i].vel[0] = dx * 0.04f; // frame delta
+            offlineState.players[i].vel[1] = dy * 0.04f;
+            offlineState.players[i].pos[0] += offlineState.players[i].vel[0];
+            offlineState.players[i].pos[1] += offlineState.players[i].vel[1];
 
             // Update heading and animation based on actual speed
-            float moveSpeed = std::sqrt(gs.players[i].vel[0]*gs.players[i].vel[0] +
-                                         gs.players[i].vel[1]*gs.players[i].vel[1]);
+            float moveSpeed = std::sqrt(offlineState.players[i].vel[0]*offlineState.players[i].vel[0] +
+                                         offlineState.players[i].vel[1]*offlineState.players[i].vel[1]);
             if (moveSpeed > 0.003f) {
-                gs.players[i].rotY = std::atan2(gs.players[i].vel[0], gs.players[i].vel[1]);
-                gs.players[i].anim = (moveSpeed > 0.008f) ? dzfoot::ANIM_RUN : dzfoot::ANIM_WALK;
+                offlineState.players[i].rotY = std::atan2(offlineState.players[i].vel[0], offlineState.players[i].vel[1]);
+                offlineState.players[i].anim = (moveSpeed > 0.008f) ? dzfoot::ANIM_RUN : dzfoot::ANIM_WALK;
             } else {
-                gs.players[i].anim = dzfoot::ANIM_IDLE;
+                offlineState.players[i].anim = dzfoot::ANIM_IDLE;
             }
         }
 
         // Ball gently orbits the center of the pitch
-        gs.ball.pos[0] = std::sin(simTime * 0.35f) * 0.35f;
-        gs.ball.pos[1] = std::cos(simTime * 0.25f) * 0.25f;
-        gs.ball.pos[2] = 0.25f;
+        offlineState.ball.pos[0] = std::sin(simTime * 0.35f) * 0.35f;
+        offlineState.ball.pos[1] = std::cos(simTime * 0.25f) * 0.25f;
+        offlineState.ball.pos[2] = 0.25f;
+
+        gs = offlineState;
+    } else {
+        offlineStateInitialized = false; // reset for next offline toggle
+        gs = gGameBridge.getInterpolatedState();
     }
 
     // Detect active player (flags bit 2 = designated/controlled) and sync with controller
