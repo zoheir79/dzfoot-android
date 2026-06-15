@@ -60,7 +60,7 @@ static const char* animToString(uint8_t anim) {
     }
 }
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_07_0010";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_15_0012";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -215,11 +215,20 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
             peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ,
             playerX, playerZ, ballSpeed);
 
-        gArManager.setServerCamera(
-            peek.camera.pos[0] * kScaleX,
-            peek.camera.pos[2] * 0.1f + 0.08f,
-            peek.camera.pos[1] * kScaleZ,
-            peek.camera.fov);
+        // Broadcast camera must know actual scene extents to clamp/position itself
+        // proportionally, just like player and ball rendering does.
+        gArManager.setPitchExtents(gRenderer.getSceneHalfX(), gRenderer.getSceneHalfZ());
+
+        if (gArManager.getCameraMode() == CameraMode::Classic) {
+            // Force broadcast TV camera (defined in ARManager.cpp) instead of server camera
+            gArManager.clearServerCamera();
+        } else {
+            gArManager.setServerCamera(
+                peek.camera.pos[0] * kScaleX,
+                peek.camera.pos[2] * 0.1f + 0.08f,
+                peek.camera.pos[1] * kScaleZ,
+                peek.camera.fov);
+        }
     }
 
     // Get AR matrices
@@ -443,7 +452,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     // Periodic diagnostic: verify client receives same positions as server logs
     static int diagCounter = 0;
-    if ((diagCounter++ % 60) == 0) {
+    if ((diagCounter++ % 300) == 0) {
         const float scaleX = gRenderer.getPitchScaleX();
         const float scaleZ = gRenderer.getPitchScaleZ();
 

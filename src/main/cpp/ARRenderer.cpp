@@ -2695,6 +2695,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
     float pitchScale = pitchHalf_[0] / 52.5f;
 
+    static int loadCooldown[25] = {};
     for (int i = 0; i < numPlayers; ++i) {
         // --- Exploit server flags ---
         uint8_t flags = playerFlags ? playerFlags[i] : 0xFF;
@@ -2820,18 +2821,21 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
             cfg.height       = (p.height > 0.5f && p.height < 2.5f) ? p.height : 1.0f;
         }
 
-        // Lazy-load modular avatar per player index, or reload if config changed
-        if (playerRigs_[i].nodes.empty() || !playerRigs_[i].configMatches(cfg)) {
+        // Lazy-load modular avatar per player index, or reload if config changed.
+        // Cooldown prevents infinite retry loops if the asset is missing/broken.
+        bool needsLoad = playerRigs_[i].nodes.empty() || !playerRigs_[i].configMatches(cfg);
+        if (needsLoad && loadCooldown[i] <= 0) {
             if (!playerRigs_[i].loadModular(cfg)) {
-                // Fallback: copy from rig 0 if available
+                loadCooldown[i] = 300; // ~5s retry backoff
                 if (!playerRigs_[0].nodes.empty()) {
-                    // Can't easily copy PlayerRig (contains GPU resources), skip for now
                     LOGI("[renderPlayers] Player %d modular load failed, will use fallback", i);
                 }
             } else {
                 playerRigs_[i].loadedCfg_ = cfg;
                 playerRigs_[i].hasLoadedCfg_ = true;
             }
+        } else if (loadCooldown[i] > 0) {
+            loadCooldown[i]--;
         }
 
         // Use player's own rig if loaded, otherwise fall back to rig 0

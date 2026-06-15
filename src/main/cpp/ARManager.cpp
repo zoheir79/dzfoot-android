@@ -6,6 +6,18 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool skipArCore) {
+    // Clean up any previous session resources to prevent stale pointers
+    // when init() is called multiple times (e.g. onCreate + checkArCoreAndInit).
+    if (markerAnchor_) { ArAnchor_release(markerAnchor_); markerAnchor_ = nullptr; }
+    if (camera_) { ArCamera_release(camera_); camera_ = nullptr; }
+    if (frame_) { ArFrame_destroy(frame_); frame_ = nullptr; }
+    if (session_) {
+        ArSession_pause(session_);
+        ArSession_destroy(session_);
+        session_ = nullptr;
+    }
+    hasServerCamera_ = false;
+
     if (skipArCore) {
         LOGI("Emulator mode: skipping ARCore session creation entirely");
         session_ = nullptr;
@@ -202,6 +214,55 @@ static void lookAt(float* m, float eyeX, float eyeY, float eyeZ,
 }
 
 void ARManager::getViewMatrix(float* out) const {
+    // Emulator / fallback: always use broadcast camera, ignore server camera and mode
+    if (!session_) {
+        static int bcLogCounter = 0;
+        if ((bcLogCounter++ % 120) == 0) {
+            LOGI("[Broadcast] session=null, hasServer=%d mode=%d target=(%.2f,%.2f) cam=(%.2f,%.2f,%.2f)",
+                 (int)hasServerCamera_, (int)camMode_,
+                 smoothFocusX_, smoothFocusZ_,
+                 smoothFocusX_ * 0.85f + shudderAccumX_,
+                 sceneHalfZ_ * 1.53f + shudderAccumY_,
+                 smoothFocusZ_ * 0.75f - sceneHalfZ_ * 3.24f);
+        }
+        // Classic Broadcast TV Camera — exact match to GameplayFootball PC
+        // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
+        // Default settings: zoom=0.5 height=0.3 fov=0.4 anglefactor=0.0
+
+        // 1. Target = ball*(1-bias) + designatedPlayer*bias  (PC uses 0.6 bias)
+        const float playerBias = 0.6f;
+        const float ballWeight = 1.0f - playerBias;
+        float targetX = smoothFocusX_ * ballWeight + playerBiasX_ * playerBias;
+        float targetZ = smoothFocusZ_ * ballWeight + playerBiasZ_ * playerBias;
+
+        // Clamp target to pitch bounds (same ratios as PC: 0.84W, 0.60H)
+        const float maxW = sceneHalfX_ * 0.84f;
+        const float maxH = sceneHalfZ_ * 0.60f;
+        if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
+        if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
+
+        // 2. Organic shudder — reduced for steady broadcast feel
+        shudderSeed_++;
+        float shudderAmt = (ballSpeed_ * 0.8f + 2.0f) * 0.02f;
+        float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
+        float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
+        shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
+        shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
+
+        // 3. Camera position — proportional to actual pitch half-width
+        float camDistZ = sceneHalfZ_ * 3.24f;
+        float camHeight = sceneHalfZ_ * 1.53f;
+        float camX = targetX * 0.85f + shudderAccumX_;
+        float camZ = targetZ * 0.75f - camDistZ;
+        float camY = camHeight + shudderAccumY_;
+
+        lookAt(out, camX, camY, camZ,
+                     targetX, 0.0f, targetZ,
+                     0.0f, 1.0f, 0.0f);
+        return;
+    }
+
+    // ARCore session is active: use ARCore camera or server camera as requested
     if (camera_ && camMode_ == CameraMode::AR) {
         ArCamera_getViewMatrix(session_, camera_, out);
         return;
@@ -212,41 +273,8 @@ void ARManager::getViewMatrix(float* out) const {
                      0.0f, 1.0f, 0.0f);
         return;
     }
-    // Classic Broadcast TV Camera — exact match to GameplayFootball PC
-    // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
-    // Default settings: zoom=0.5 height=0.3 fov=0.4 anglefactor=0.0
-    
-    // 1. Target = ball*(1-bias) + designatedPlayer*bias  (PC uses 0.6 bias)
-    const float playerBias = 0.6f;
-    const float ballWeight = 1.0f - playerBias;
-    float targetX = smoothFocusX_ * ballWeight + playerBiasX_ * playerBias;
-    float targetZ = smoothFocusZ_ * ballWeight + playerBiasZ_ * playerBias;
-    
-    // Clamp target to pitch bounds (same ratios as PC: 0.84W, 0.60H)
-    const float maxW = 5.25f * 0.84f;   // pitchHalf_[0]*0.1 * 0.84
-    const float maxH = 3.40f * 0.60f;   // pitchHalf_[1]*0.1 * 0.60
-    if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
-    if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
-    
-    // 2. Organic shudder — reduced for steady broadcast feel
-    //    Gentle shudder only on fast ball, strong damping for heavy camera feel
-    shudderSeed_++;
-    float shudderAmt = (ballSpeed_ * 0.8f + 2.0f) * 0.02f; // reduced base ~0.04m at rest
-    float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
-    float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
-    // Stronger decay = steadier camera (heavy TV crane inertia)
-    shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
-    shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
-    
-    // 3. Camera position — outside of pitch boundaries (sideline is at -7.896m)
-    //    Z=-11.0m = outside the sideline for beautiful broadcast TV spectator framing, Y=5.2m
-    float camX = targetX * 0.85f + shudderAccumX_;
-    float camZ = targetZ * 0.75f - 11.0f;                 // positioned outside the sideline
-    float camY = 5.20f + shudderAccumY_;                  // elevated for beautiful broadcast framing
-    
-    lookAt(out, camX, camY, camZ,
-                 targetX, 0.0f, targetZ,                // track ball at ground level
-                 0.0f, 1.0f, 0.0f); // Y is up
+    // Fallback within ARCore session: broadcast camera
+    lookAt(out, 0.0f, 5.2f, -11.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 }
 
 void ARManager::getProjectionMatrix(float* out, float near, float far) const {
@@ -255,7 +283,8 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
         return;
     }
     float fovDeg = 38.0f;
-    if (hasServerCamera_ && camMode_ == CameraMode::Classic) {
+    // On emulator / fallback: never use server camera FOV; always use broadcast FOV
+    if (session_ && hasServerCamera_ && camMode_ == CameraMode::Classic) {
         fovDeg = serverCamFov_;
     } else {
         // Stadium spectator FOV — tighter telephoto for larger player details

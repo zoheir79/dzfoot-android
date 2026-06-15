@@ -148,6 +148,10 @@ public:
     float getPitchScaleX() const { return pitchHalf_[0] * 0.1f; }
     float getPitchScaleZ() const { return pitchHalf_[1] * 0.1f / 0.4306f; } // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
 
+    // Scene half-extents in metres (used by broadcast camera for proportional positioning)
+    float getSceneHalfX() const { return pitchHalf_[0] * 0.1f; }
+    float getSceneHalfZ() const { return pitchHalf_[1] * 0.1f; }
+
 private:
     GLuint cameraShader_  = 0;
     GLuint skinnedShader_ = 0; // Keeping for reference V2
@@ -206,6 +210,6 @@ private:
     GLuint shadowTex_ = 0;       // depth attachment for shadow FBO
     GLuint shadowColorTex_ = 0;  // RGBA shadow map sampled in main pass (portable depth encoding)
     GLuint shadowShader_ = 0;
-    static constexpr int kShadowMapSize = 4096;
+    static constexpr int kShadowMapSize = 2048;
     float lightSpaceMatrix_[16];
 };

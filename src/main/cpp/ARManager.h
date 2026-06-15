@@ -46,6 +46,12 @@ public:
     void setCameraMode(CameraMode mode) { camMode_ = mode; }
     CameraMode getCameraMode() const { return camMode_; }
 
+    // Set actual scene pitch half-extents from renderer (metres)
+    void setPitchExtents(float halfX, float halfZ) {
+        sceneHalfX_ = halfX;
+        sceneHalfZ_ = halfZ;
+    }
+
     void setServerCamera(float x, float y, float z, float fov) {
         hasServerCamera_ = true;
         serverCamX_ = x;
@@ -98,6 +104,11 @@ private:
     float serverCamY_      = 0.0f;
     float serverCamZ_      = 0.0f;
     float serverCamFov_     = 38.0f;
+
+    // Actual scene pitch half-extents (in metres), set from renderer so the
+    // broadcast camera clamps and positions itself proportionally.
+    float sceneHalfX_ = 5.25f;
+    float sceneHalfZ_ = 3.40f;
 
     // Camera shudder state (tremblement organique)
     mutable float shudderAccumX_ = 0.0f;
