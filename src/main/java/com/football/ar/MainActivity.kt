@@ -588,9 +588,11 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             Log.w("gamestates", "ANDROID_IN GameState incomplete: ${data.size} bytes (expected 1256)")
             return
         }
-        // Parse binary GameStatePacket (offset 8=tick, 32=ball pos, 26=score, 28=timer)
+        // Parse binary GameStatePacket (offset 12=tick, 32=ball pos, 26=score, 28=timer)
         val bb = java.nio.ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        val tick = bb.getInt(8)
+        val tick = bb.getInt(12)
+        val gameFlags = data[25].toInt() and 0xFF
+        val inPlay = (gameFlags and 1) != 0
         val scoreA = data[26].toInt()
         val scoreB = data[27].toInt()
         val timerBytes = data.sliceArray(28 until 32)
@@ -600,7 +602,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val ballX = bb.getFloat(32)
         val ballY = bb.getFloat(36)
         val ballZ = bb.getFloat(40)
-        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 44].toInt() and 4 != 0 } ?: -1
+        // NetworkPlayerState layout: pos(12)+vel(12)+dir(12)+rotY(4)+anim(1)+team(1)+role(1)+flags(1)+tired(4)=48
+        // flags offset within player record = 40+1+1+1 = 43
+        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 43].toInt() and 4 != 0 } ?: -1
         // Camera offset: 12(header)+4(tick)+8(ts)+1(mode)+1(flags)+2(score)+4(timer)+40(ball)+1056(players)+96(officials)=1224
         val camX = bb.getFloat(1224)
         val camY = bb.getFloat(1228)
@@ -610,7 +614,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val camRot2 = bb.getFloat(1244)
         val camRot3 = bb.getFloat(1248)
         val camFov = bb.getFloat(1252)
-        Log.i("gamestates", "ANDROID_IN size=${data.size} tick=$tick ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} active=$activeIdx cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        Log.i("gamestates", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
             timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
