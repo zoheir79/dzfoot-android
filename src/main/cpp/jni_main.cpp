@@ -377,11 +377,8 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     uint8_t buf[pktSize];
     gTouchController.serialize(buf, pktSize);
     const dzfoot::PlayerInputPacket* pkt = reinterpret_cast<const dzfoot::PlayerInputPacket*>(buf);
-    bool hasInput = (pkt->buttons != 0) || (std::fabs(pkt->dirX) > 0.01f) || (std::fabs(pkt->dirZ) > 0.01f);
-    if (hasInput) {
-        LOGI("[DZ_JNI] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X",
-             pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons);
-    }
+    LOGI("[DZ_JNI] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X",
+         pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons);
     jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);
     return result;
