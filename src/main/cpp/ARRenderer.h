@@ -210,6 +210,39 @@ private:
     GLuint shadowTex_ = 0;       // depth attachment for shadow FBO
     GLuint shadowColorTex_ = 0;  // RGBA shadow map sampled in main pass (portable depth encoding)
     GLuint shadowShader_ = 0;
-    static constexpr int kShadowMapSize = 2048;
+    static constexpr int kShadowMapSize = 512; // reduced from 2048 to save GPU fill
     float lightSpaceMatrix_[16];
+
+    // Off-screen render target: render 3D scene at reduced resolution, then blit to screen
+    static constexpr float kRenderScale = 0.75f;
+    GLuint blitShader_ = 0;
+    GLuint sceneFbo_ = 0;
+    GLuint sceneColorTex_ = 0;
+    GLuint sceneDepthTex_ = 0;
+    int sceneRenderW_ = 0;
+    int sceneRenderH_ = 0;
+    GLint blitTexLoc_ = -1;
+    void resizeSceneFbo(int screenW, int screenH);
+
+    // Cached uniform locations (queried once after shader compile, NOT per-frame)
+    // This avoids the massive CPU overhead of glGetUniformLocation on every draw call.
+    GLint staticMvpLoc_ = -1;
+    GLint staticModelLoc_ = -1;
+    GLint staticColLoc_ = -1;
+    GLint staticMatLoc_ = -1;
+    GLint staticPitchHalfLoc_ = -1;
+    GLint staticUseTexLoc_ = -1;
+    GLint staticTexLoc_ = -1;
+    GLint staticUseOverlayLoc_ = -1;
+    GLint staticOverlayTexLoc_ = -1;
+    GLint staticTimeLoc_ = -1;
+    GLint staticLightSpaceLoc_ = -1;
+    GLint staticShadowMapLoc_ = -1;
+    GLint staticFogDensityLoc_ = -1;
+    GLint staticAdboardLocs_[4] = {-1, -1, -1, -1};
+
+    GLint uiOrthoLoc_ = -1;
+    GLint uiColorLoc_ = -1;
+
+    GLint shadowMvpLoc_ = -1;
 };

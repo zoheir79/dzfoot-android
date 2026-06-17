@@ -21,13 +21,13 @@ class LiveKitManager(private val activity: MainActivity) {
             room!!.events.collect { event ->
                 when (event) {
                     is RoomEvent.Connected -> {
-                        android.util.Log.i("LiveKitManager", "Connected to room")
+                        android.util.Log.i("gamestates", "LK Connected")
                     }
                     is RoomEvent.Disconnected -> {
-                        android.util.Log.i("LiveKitManager", "Disconnected from room")
+                        android.util.Log.i("gamestates", "LK Disconnected")
                     }
                     is RoomEvent.DataReceived -> {
-                        android.util.Log.d("LiveKitManager", "DataReceived topic=${event.topic} size=${event.data.size}")
+                        android.util.Log.i("gamestates", "LK_RECV topic=${event.topic} size=${event.data.size}")
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
                             "setup" -> activity.jni.nativeOnMatchSetup(event.data)
@@ -48,21 +48,10 @@ class LiveKitManager(private val activity: MainActivity) {
                             "tac" -> activity.jni.nativeOnTacticalState(event.data)
                         }
                     }
-                    is RoomEvent.ParticipantConnected -> {
-                        android.util.Log.d("LiveKitManager", "ParticipantConnected: ${event.participant.identity} sid=${event.participant.sid}")
-                    }
-                    is RoomEvent.TrackSubscribed -> {
-                        android.util.Log.d("LiveKitManager", "TrackSubscribed")
-                    }
                     is RoomEvent.FailedToConnect -> {
-                        android.util.Log.e("LiveKitManager", "FailedToConnect: ${event.error.message}")
+                        android.util.Log.e("gamestates", "LK FailedToConnect: ${event.error.message}")
                     }
-                    is RoomEvent.ParticipantDisconnected -> {
-                        android.util.Log.d("LiveKitManager", "ParticipantDisconnected: ${event.participant.identity}")
-                    }
-                    else -> {
-                        android.util.Log.d("LiveKitManager", "Event: ${event.javaClass.simpleName}")
-                    }
+                    else -> {} // ignore other events
                 }
             }
         }
@@ -70,9 +59,9 @@ class LiveKitManager(private val activity: MainActivity) {
         scope.launch {
             try {
                 room!!.connect(wsUrl, token)
-                android.util.Log.i("LiveKitManager", "Room connect call completed")
+                android.util.Log.i("gamestates", "LK connect call completed")
             } catch (e: Exception) {
-                android.util.Log.e("LiveKitManager", "Failed to connect: ${e.message}")
+                android.util.Log.e("gamestates", "LK Failed to connect: ${e.message}")
             }
         }
     }
@@ -80,11 +69,11 @@ class LiveKitManager(private val activity: MainActivity) {
     fun sendInput(inputBytes: ByteArray) {
         val r = room
         if (r == null) {
-            android.util.Log.w("LiveKitManager", "sendInput: room is null")
+            android.util.Log.w("gamestates", "LK_SEND room=null")
             return
         }
         if (r.state != Room.State.CONNECTED) {
-            android.util.Log.w("LiveKitManager", "sendInput: not connected, state=${r.state}")
+            android.util.Log.w("gamestates", "LK_SEND not connected, state=${r.state}")
             return
         }
         scope.launch {
@@ -95,9 +84,9 @@ class LiveKitManager(private val activity: MainActivity) {
                     reliability = DataPublishReliability.LOSSY,
                     topic = "in",
                 )
-                android.util.Log.d("LiveKitManager", "publishData ok topic=in size=${inputBytes.size}")
+                android.util.Log.i("gamestates", "LK_SEND topic=in size=${inputBytes.size}")
             } catch (e: Exception) {
-                android.util.Log.w("LiveKitManager", "publishData failed: ${e.message}")
+                android.util.Log.w("gamestates", "LK_SEND publishData failed: ${e.message}")
             }
         }
     }

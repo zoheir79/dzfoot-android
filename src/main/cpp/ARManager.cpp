@@ -19,14 +19,12 @@ bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool ski
     hasServerCamera_ = false;
 
     if (skipArCore) {
-        LOGI("Emulator mode: skipping ARCore session creation entirely");
         session_ = nullptr;
         return true; // Fallback: continue without AR
     }
 
     ArStatus status = ArSession_create(env, ctx, &session_);
     if (status != AR_SUCCESS) {
-        LOGI("ARCore session create failed: %d, running in fallback mode", status);
         session_ = nullptr;
         return true; // Fallback: continue without AR
     }
@@ -44,7 +42,6 @@ bool ARManager::init(JNIEnv* env, jobject ctx, AAssetManager* assetMgr, bool ski
     glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     ArSession_setCameraTextureName(session_, cameraTextureId_);
 
-    LOGI("ARCore init OK");
     return true;
 }
 
@@ -63,7 +60,6 @@ void ARManager::destroy() {
 void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
     AAsset* asset = AAssetManager_open(assetMgr, "marker_dzfoot.png", AASSET_MODE_BUFFER);
     if (!asset) {
-        LOGI("marker_dzfoot.png not found in assets!");
         return;
     }
     const uint8_t* imgData = (const uint8_t*)AAsset_getBuffer(asset);
@@ -80,7 +76,6 @@ void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
     AAsset_close(asset);
 
     if (!bitmap) {
-        LOGI("Failed to decode marker.jpg via BitmapFactory");
         return;
     }
 
@@ -115,7 +110,6 @@ void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
         session_, db, "football_marker", grayscale.data(), width, height, stride, 0.21f, &idx);
 
     if (status != AR_SUCCESS) {
-        LOGI("Failed to add image to DB: %d", status);
         ArAugmentedImageDatabase_destroy(db);
         return;
     }
@@ -126,7 +120,6 @@ void ARManager::setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr) {
     ArSession_configure(session_, cfg);
     ArConfig_destroy(cfg);
     ArAugmentedImageDatabase_destroy(db);
-    LOGI("Marker detection configured (%dx%d, index %d)", width, height, idx);
 }
 
 bool ARManager::update() {
@@ -178,7 +171,6 @@ void ARManager::checkForMarker() {
                 ArAugmentedImage_getCenterPose(session_, img, pose);
                 ArTrackable_acquireNewAnchor(session_, trackable, pose, &markerAnchor_);
                 ArPose_destroy(pose);
-                LOGI("Marker anchor created!");
             }
             markerTracked_ = true;
         } else {
@@ -209,72 +201,61 @@ static void lookAt(float* m, float eyeX, float eyeY, float eyeZ,
     // Column-major order for OpenGL
     m[0]=s[0];  m[4]=s[1];  m[8]=s[2];  m[12]=-(s[0]*eyeX+s[1]*eyeY+s[2]*eyeZ);
     m[1]=u[0];  m[5]=u[1];  m[9]=u[2];  m[13]=-(u[0]*eyeX+u[1]*eyeY+u[2]*eyeZ);
-    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2];m[14]=(f[0]*eyeX+f[1]*eyeY+f[2]*eyeZ);
+    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2];m[14]=-(f[0]*eyeX+f[1]*eyeY+f[2]*eyeZ);
     m[3]=0;     m[7]=0;     m[11]=0;     m[15]=1;
 }
 
 void ARManager::getViewMatrix(float* out) const {
-    // Emulator / fallback: always use broadcast camera, ignore server camera and mode
-    if (!session_) {
-        static int bcLogCounter = 0;
-        if ((bcLogCounter++ % 120) == 0) {
-            LOGI("[Broadcast] session=null, hasServer=%d mode=%d target=(%.2f,%.2f) cam=(%.2f,%.2f,%.2f)",
-                 (int)hasServerCamera_, (int)camMode_,
-                 smoothFocusX_, smoothFocusZ_,
-                 smoothFocusX_ * 0.85f + shudderAccumX_,
-                 sceneHalfZ_ * 1.53f + shudderAccumY_,
-                 smoothFocusZ_ * 0.75f - sceneHalfZ_ * 3.24f);
-        }
-        // Classic Broadcast TV Camera — exact match to GameplayFootball PC
-        // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
-        // Default settings: zoom=0.5 height=0.3 fov=0.4 anglefactor=0.0
-
-        // 1. Target = ball*(1-bias) + designatedPlayer*bias  (PC uses 0.6 bias)
-        const float playerBias = 0.6f;
-        const float ballWeight = 1.0f - playerBias;
-        float targetX = smoothFocusX_ * ballWeight + playerBiasX_ * playerBias;
-        float targetZ = smoothFocusZ_ * ballWeight + playerBiasZ_ * playerBias;
-
-        // Clamp target to pitch bounds (same ratios as PC: 0.84W, 0.60H)
-        const float maxW = sceneHalfX_ * 0.84f;
-        const float maxH = sceneHalfZ_ * 0.60f;
-        if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
-        if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
-
-        // 2. Organic shudder — reduced for steady broadcast feel
-        shudderSeed_++;
-        float shudderAmt = (ballSpeed_ * 0.8f + 2.0f) * 0.02f;
-        float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
-        float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
-        shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
-        shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
-
-        // 3. Camera position — proportional to actual pitch half-width
-        float camDistZ = sceneHalfZ_ * 3.24f;
-        float camHeight = sceneHalfZ_ * 1.53f;
-        float camX = targetX * 0.85f + shudderAccumX_;
-        float camZ = targetZ * 0.75f - camDistZ;
-        float camY = camHeight + shudderAccumY_;
-
-        lookAt(out, camX, camY, camZ,
-                     targetX, 0.0f, targetZ,
-                     0.0f, 1.0f, 0.0f);
-        return;
-    }
-
-    // ARCore session is active: use ARCore camera or server camera as requested
-    if (camera_ && camMode_ == CameraMode::AR) {
+    // 1. If in AR mode and we have an active ARCore session + camera, use ARCore camera matrix
+    if (session_ && camera_ && camMode_ == CameraMode::AR) {
         ArCamera_getViewMatrix(session_, camera_, out);
         return;
     }
-    if (hasServerCamera_ && camMode_ == CameraMode::Classic) {
+
+    // 2. If in Classic mode and we have a valid server camera position, use the server camera
+    if (session_ && hasServerCamera_ && camMode_ == CameraMode::Classic) {
         lookAt(out, serverCamX_, serverCamY_, serverCamZ_,
                      smoothFocusX_, 0.0f, smoothFocusZ_,
                      0.0f, 1.0f, 0.0f);
         return;
     }
-    // Fallback within ARCore session: broadcast camera
-    lookAt(out, 0.0f, 5.2f, -11.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+
+    // 3. Otherwise (emulator/fallback OR Classic mode on real phone with cleared server camera),
+    //    always use the fully dynamic, proportional Broadcast TV Camera!
+    // Classic Broadcast TV Camera — exact match to GameplayFootball PC
+    // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
+    // Default settings: zoom=0.5 height=0.3 fov=0.4 anglefactor=0.0
+
+    // 1. Target = ball*(1-bias) + designatedPlayer*bias  (PC uses 0.6 bias)
+    const float playerBias = 0.6f;
+    const float ballWeight = 1.0f - playerBias;
+    float targetX = smoothFocusX_ * ballWeight + playerBiasX_ * playerBias;
+    float targetZ = smoothFocusZ_ * ballWeight + playerBiasZ_ * playerBias;
+
+    // Clamp target to pitch bounds (same ratios as PC: 0.84W, 0.60H)
+    const float maxW = sceneHalfX_ * 0.84f;
+    const float maxH = sceneHalfZ_ * 0.60f;
+    if (fabsf(targetX) > maxW) targetX = maxW * (targetX > 0 ? 1.0f : -1.0f);
+    if (fabsf(targetZ) > maxH) targetZ = maxH * (targetZ > 0 ? 1.0f : -1.0f);
+
+    // 2. Organic shudder — reduced for steady broadcast feel
+    shudderSeed_++;
+    float shudderAmt = (ballSpeed_ * 0.8f + 2.0f) * 0.02f;
+    float noiseX = (float)(shudderSeed_ % 17 - 8) / 8.5f;
+    float noiseY = (float)((shudderSeed_ * 7) % 13 - 6) / 6.5f;
+    shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
+    shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
+
+    // 3. Camera position — proportional to actual pitch half-width
+    float camDistZ = sceneHalfZ_ * 3.24f;
+    float camHeight = sceneHalfZ_ * 1.53f;
+    float camX = targetX * 0.85f + shudderAccumX_;
+    float camZ = targetZ * 0.75f - camDistZ;
+    float camY = camHeight + shudderAccumY_;
+
+    lookAt(out, camX, camY, camZ,
+                 targetX, 0.0f, targetZ,
+                 0.0f, 1.0f, 0.0f);
 }
 
 void ARManager::getProjectionMatrix(float* out, float near, float far) const {

@@ -41,6 +41,10 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    if (len < sizeof(dzfoot::GameStatePacket)) {
+        LOGE("GameBridge: packet too small: %zu (expected %zu)", len, sizeof(dzfoot::GameStatePacket));
+        return;
+    }
     std::memcpy(&state_, data, sizeof(dzfoot::GameStatePacket));
 
     // Sanity-check first player position to catch NaN
@@ -49,20 +53,20 @@ void GameBridge::applyGameState(const uint8_t* data, size_t len) {
         return;
     }
 
-    // Diagnostic: dump raw bytes of player 0 and player 11 X positions to verify sign
     static int recvCounter = 0;
-    if ((recvCounter++ % 20) == 0) {
-        const uint8_t* p0 = data + offsetof(dzfoot::GameStatePacket, players) + 0 * sizeof(dzfoot::NetworkPlayerState);
-        const uint8_t* p11 = data + offsetof(dzfoot::GameStatePacket, players) + 11 * sizeof(dzfoot::NetworkPlayerState);
-        LOGI("[GameBridge] pkt tick=%u  p0.pos[0] bytes=%02X%02X%02X%02X float=%.6f  p11.pos[0] bytes=%02X%02X%02X%02X float=%.6f",
-             state_.tick,
-             p0[0], p0[1], p0[2], p0[3], state_.players[0].pos[0],
-             p11[0], p11[1], p11[2], p11[3], state_.players[11].pos[0]);
+    if ((recvCounter++ % 60) == 0) {
+        LOGI("[gamestates] GameBridge recv tick=%u size=%zu ball=(%.3f,%.3f,%.3f) cam=(%.3f,%.3f,%.3f) fov=%.1f p0=(%.3f,%.3f) p6=(%.3f,%.3f)",
+             state_.tick, len,
+             state_.ball.pos[0], state_.ball.pos[1], state_.ball.pos[2],
+             state_.camera.pos[0], state_.camera.pos[1], state_.camera.pos[2],
+             state_.camera.fov,
+             state_.players[0].pos[0], state_.players[0].pos[1],
+             state_.players[6].pos[0], state_.players[6].pos[1]);
     }
 
     if (state_.tick < lastAppliedTick_ && lastAppliedTick_ - state_.tick > 10) {
         // Server reset detected (new match or restart)
-        LOGI("Server tick reset detected (new=%u, old=%u). Clearing interpolator.", state_.tick, lastAppliedTick_.load());
+        LOGI("[gamestates] Server tick reset detected (new=%u, old=%u). Clearing interpolator.", state_.tick, lastAppliedTick_.load());
         interpolator_.clear();
         lastAppliedTick_ = 0;
         lastPacketLocalTimeMs_ = 0.0;
@@ -105,26 +109,11 @@ dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
     interpolator_.interpolate(renderTime, out);
 
     static int interpCounter = 0;
-    if ((interpCounter++ % 60) == 0) {
-        // Log 1: GF original positions for all 22 players + ball + anim
-        LOGI("[GF_POS] tick=%u ball=(%.3f,%.3f,%.3f)", out.tick, out.ball.pos[0], out.ball.pos[1], out.ball.pos[2]);
-        for (int t = 0; t < 2; ++t) {
-            char line[512];
-            int offset = 0;
-            offset += snprintf(line + offset, sizeof(line) - offset, "[GF_POS] T%d ", t);
-            for (int i = 0; i < 11; ++i) {
-                int idx = t * 11 + i;
-                const auto& p = out.players[idx];
-                if (offset < (int)sizeof(line) - 40) {
-                    offset += snprintf(line + offset, sizeof(line) - offset, "P%d:(%.3f,%.3f,%u) ", idx, p.pos[0], p.pos[1], p.anim);
-                }
-            }
-            LOGI("%s", line);
-        }
-
-        // Log 2: GK diagnostic (keep existing)
-        LOGI("[GameBridge] interp tick=%u p0=%.6f p11=%.6f",
-             out.tick, out.players[0].pos[0], out.players[11].pos[0]);
+    if ((interpCounter++ % 120) == 0) {
+        LOGI("[gamestates] interp tick=%u ball=(%.3f,%.3f,%.3f) p0=(%.3f,%.3f) p6=(%.3f,%.3f)",
+             out.tick, out.ball.pos[0], out.ball.pos[1], out.ball.pos[2],
+             out.players[0].pos[0], out.players[0].pos[1],
+             out.players[6].pos[0], out.players[6].pos[1]);
     }
 
     return out;

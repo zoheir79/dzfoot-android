@@ -55,11 +55,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onCreate(saved)
 
         // Initialize JNI and AssetManager immediately before GLSurfaceView starts rendering
-        Log.i("MainActivity", "About to call nativeInit ...")
         val initOk = jni.nativeInit(this, assets, isEmulator())
-        Log.i("MainActivity", "nativeInit returned: $initOk")
         val marker = jni.nativeGetBuildMarker()
-        Log.i("MainActivity", "Native build marker: $marker")
         Toast.makeText(this, "Native: $marker", Toast.LENGTH_LONG).show()
 
         glView = GLSurfaceView(this).apply {
@@ -68,7 +65,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
 
         audioSystem.init()
-        loadSounds()
+        Thread { loadSounds() }.start() // background thread: disk I/O from assets must not block UI
         crowdHandler.post(crowdRunnable)
 
         scoreText = TextView(this).apply {
@@ -157,7 +154,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun connectToLiveKit(lkUrl: String, token: String, roomId: String, mode: String) {
         lkManager = LiveKitManager(this)
         lkManager.connect(lkUrl, token)
-        Log.i("MainActivity", "Connected to LiveKit room: $roomId (mode=$mode)")
+        /* connected */
     }
 
     private fun showModeSelectionDialogFallback() {
@@ -224,15 +221,15 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                                 val shortName = obj.optString("short_name", "").lowercase()
                                 if ((name.contains("oranais")) || (shortName == "mco")) {
                                     teamA = obj.getString("id")
-                                    Log.i("MainActivity", "Found MCO: ${obj.optString("name")} id=$teamA")
+                                    /* found MCO */
                                 }
                                 if ((name.contains("moulodia club d'alger")) || (shortName == "mca")) {
                                     teamB = obj.getString("id")
-                                    Log.i("MainActivity", "Found MCA: ${obj.optString("name")} id=$teamB")
+                                    /* found MCA */
                                 }
                             }
                             if ((teamA == null) || (teamB == null)) {
-                                Log.w("MainActivity", "MCO/MCA not found in catalog, falling back to random")
+                                /* MCO/MCA not found */
                             }
                         }
                         if ((teamA == null) || (teamB == null)) {
@@ -244,12 +241,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                                 teamB = teamsArr.getJSONObject(idxB).getString("id")
                                 val nameA = teamsArr.getJSONObject(idxA).optString("name", "Team A")
                                 val nameB = teamsArr.getJSONObject(idxB).optString("name", "Team B")
-                                Log.i("MainActivity", "Picked random teams: $nameA vs $nameB")
+                                /* picked random teams */
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w("MainActivity", "Could not fetch DZ teams, using fallback: ${e.message}")
+                    /* could not fetch teams */
                 }
 
                 // 2. Create the match
@@ -269,7 +266,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 teamB?.let { bodyBuilder.append(",\"team_b\":\"$it\"") }
                 bodyBuilder.append("}")
                 val body = bodyBuilder.toString()
-                Log.i("MainActivity", "Create-match body: $body")
+                /* create match */
                 conn.outputStream.use { os ->
                     os.write(body.toByteArray(Charsets.UTF_8))
                 }
@@ -292,12 +289,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 }
                 val token = json.getString("token")
 
-                Log.i("MainActivity", "Match created! Room: $roomId, Raw LK URL: $rawLkUrl, Resolved WS URL: $lkUrl, Token Length: ${token.length}")
+                /* match created */
 
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
-                    Log.i("MainActivity", "Connecting to LiveKit room: $roomId (mode=$mode)")
+                    /* connecting */
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to create match: ${e.message}")
@@ -329,7 +326,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w("MainActivity", "Could not fetch DZ teams: ${e.message}")
+                    /* could not fetch teams */
                 }
 
                 val playerA = java.util.UUID.randomUUID().toString()
@@ -347,7 +344,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 teamB?.let { bodyBuilder.append(",\"team_b\":\"$it\"") }
                 bodyBuilder.append("}")
                 val body = bodyBuilder.toString()
-                Log.i("MainActivity", "Create PvP body: $body")
+                /* create PvP */
                 conn.outputStream.use { os -> os.write(body.toByteArray(Charsets.UTF_8)) }
 
                 val responseCode = conn.responseCode
@@ -373,10 +370,10 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
                     if (status == "waiting") {
-                        Log.i("MainActivity", "PvP match created. Waiting for opponent in room $roomId")
+                        /* PvP waiting */
                         android.widget.Toast.makeText(this, "Match créé ! En attente d'un adversaire...", android.widget.Toast.LENGTH_LONG).show()
                     } else {
-                        Log.i("MainActivity", "Connected to LiveKit room: $roomId (PvP)")
+                        /* PvP connected */
                     }
                 }
             } catch (e: Exception) {
@@ -456,7 +453,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 conn.readTimeout = 10000
 
                 val body = "{\"room_id\":\"$roomId\",\"player_id\":\"$playerB\"}"
-                Log.i("MainActivity", "Join-match body: $body")
+                /* join match */
                 conn.outputStream.use { os -> os.write(body.toByteArray(Charsets.UTF_8)) }
 
                 val responseCode = conn.responseCode
@@ -483,7 +480,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
-                    Log.i("MainActivity", "Joined PvP match $roomId, connected to LiveKit")
+                    /* joined PvP */
                     android.widget.Toast.makeText(this, "Match rejoint !", android.widget.Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
@@ -507,7 +504,6 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private fun checkArCoreAndInit(forceClassic: Boolean) {
         if (forceClassic) {
-            Log.i("MainActivity", "Classic mode requested: skipping ARCore session creation")
             jni.nativeInit(this, assets, isEmulator = true)
             return
         }
@@ -518,48 +514,57 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             return
         }
 
-        Log.i("MainActivity", "ARCore availability: $availability (supported=${availability.isSupported})")
-
         if (availability.isSupported) {
             try {
                 when (ArCoreApk.getInstance().requestInstall(this, !userRequestedInstall)) {
                     ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
                         userRequestedInstall = true
-                        Log.i("MainActivity", "ARCore install requested - will retry on resume")
                         return
                     }
-                    ArCoreApk.InstallStatus.INSTALLED -> {
-                        Log.i("MainActivity", "ARCore installed - creating session")
-                    }
+                    ArCoreApk.InstallStatus.INSTALLED -> {}
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "ARCore install request failed: ${e.message}")
             }
             try {
                 jni.nativeInit(this, assets, isEmulator = false)
-                Log.i("MainActivity", "ARCore native init done")
             } catch (e: Exception) {
                 Log.e("MainActivity", "ARCore native init failed: ${e.message} - using fallback")
                 jni.nativeInit(this, assets, isEmulator = true)
             }
         } else {
-            Log.w("MainActivity", "ARCore NOT supported on this device - using fallback rendering")
             jni.nativeInit(this, assets, isEmulator = true)
         }
     }
 
     private var sendInputLogCount = 0
+    private var lastSendInputMs = 0L
+    private val soundsLock = Object()
+    private var soundsLoaded = false
     private fun sendInput() {
+        val now = System.currentTimeMillis()
+        if (now - lastSendInputMs < 50) return // throttle to ~20 Hz max
+        lastSendInputMs = now
         if (::lkManager.isInitialized) {
             val inputBytes = jni.nativeGetInputBytes()
             if (inputBytes.isNotEmpty()) {
-                if (sendInputLogCount++ % 20 == 0) {
-                    Log.d("MainActivity", "sendInput called, size=${inputBytes.size}")
+                // Parse PlayerInputPacket (36 bytes) to log real values
+                if (inputBytes.size >= 20) {
+                    val buf = java.nio.ByteBuffer.wrap(inputBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val magic = buf.getShort(0).toInt() and 0xFFFF
+                    val version = buf.get(2).toInt() and 0xFF
+                    val type = buf.get(3).toInt() and 0xFF
+                    val team = buf.get(8).toInt() and 0xFF
+                    val playerIdx = buf.get(9).toInt() and 0xFF
+                    val dirX = buf.getFloat(10)
+                    val dirZ = buf.getFloat(14)
+                    val buttons = buf.getShort(16).toInt() and 0xFFFF
+                    if (sendInputLogCount++ % 10 == 0) {
+                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%04X ver=$version".format(buttons, magic))
+                    }
                 }
                 lkManager.sendInput(inputBytes)
             }
-        } else {
-            Log.w("MainActivity", "sendInput: lkManager not initialized yet")
         }
     }
 
@@ -579,14 +584,33 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         synchronized(this) {
             latestGameState = data.copyOf()
         }
-        if (data.size < 72) return
-        // Parse binary GameStatePacket (offset 26 = score[2], offset 28 = timer float)
+        if (data.size < 1256) {
+            Log.w("gamestates", "ANDROID_IN GameState incomplete: ${data.size} bytes (expected 1256)")
+            return
+        }
+        // Parse binary GameStatePacket (offset 8=tick, 32=ball pos, 26=score, 28=timer)
+        val bb = java.nio.ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val tick = bb.getInt(8)
         val scoreA = data[26].toInt()
         val scoreB = data[27].toInt()
         val timerBytes = data.sliceArray(28 until 32)
         val timer = java.nio.ByteBuffer.wrap(timerBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).float
         val minutes = (timer / 60).toInt()
         val seconds = (timer % 60).toInt()
+        val ballX = bb.getFloat(32)
+        val ballY = bb.getFloat(36)
+        val ballZ = bb.getFloat(40)
+        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 44].toInt() and 4 != 0 } ?: -1
+        // Camera offset: 12(header)+4(tick)+8(ts)+1(mode)+1(flags)+2(score)+4(timer)+40(ball)+1056(players)+96(officials)=1224
+        val camX = bb.getFloat(1224)
+        val camY = bb.getFloat(1228)
+        val camZ = bb.getFloat(1232)
+        val camRot0 = bb.getFloat(1236)
+        val camRot1 = bb.getFloat(1240)
+        val camRot2 = bb.getFloat(1244)
+        val camRot3 = bb.getFloat(1248)
+        val camFov = bb.getFloat(1252)
+        Log.i("gamestates", "ANDROID_IN size=${data.size} tick=$tick ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} active=$activeIdx cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
             timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
@@ -598,6 +622,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             latestGameState.copyOf()
         }
         jni.nativeOnFrame(viewMatrix, projMatrix, anchorMatrix, stateCopy)
+        sendInput() // continuous send: buttons held while finger stays down
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -615,7 +640,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView.onResume()
         jni.nativeResume(this)
         audioSystem.init()
-        loadSounds()
+        Thread { loadSounds() }.start()
     }
 
     override fun onPause() {
@@ -623,6 +648,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView.onPause()
         jni.nativePause()
         audioSystem.destroy()
+        synchronized(soundsLock) { soundsLoaded = false }
     }
 
     override fun onDestroy() {
@@ -646,6 +672,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     fun nativeAudioStopLoop() { audioSystem.stopLoop() }
 
     private fun loadSounds() {
+        synchronized(soundsLock) {
+            if (soundsLoaded) return
+        }
         val sounds = listOf(
             "ballsound", "crowd01", "crowd02",
             "goalpost", "whistle2", "whistle3"
@@ -657,8 +686,11 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     audioSystem.loadSound(name, data)
                 }
             } catch (e: Exception) {
-                Log.w("MainActivity", "Sound $name not found in assets: ${e.message}")
+                /* sound not found */
             }
+        }
+        synchronized(soundsLock) {
+            soundsLoaded = true
         }
     }
 
@@ -670,8 +702,6 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val playerIdx = data[14].toInt() and 0xFF
         val scoreA    = data[32].toInt() and 0xFF
         val scoreB    = data[33].toInt() and 0xFF
-
-        Log.i("MainActivity", "handleMatchEvent: type=$eventType team=$team player=$playerIdx score=$scoreA-$scoreB")
 
         when (eventType) {
             0  -> onGoal(team, playerIdx, scoreA, scoreB)
@@ -807,7 +837,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 }
             }
         } catch (e: Exception) {
-            Log.w("MainActivity", "Vibration failed: ${e.message}")
+            /* vibration failed */
         }
     }
 }

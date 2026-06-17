@@ -60,7 +60,7 @@ static const char* animToString(uint8_t anim) {
     }
 }
 
-static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_15_0012";
+static constexpr const char* NATIVE_BUILD_MARKER = "DZFOOT_VERIFY_2026_06_15_0014";
 
 // Forward declaration of protocol test (tests/test_protocol_layout.cpp)
 extern bool runProtocolTests();
@@ -170,12 +170,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
     if (!gArManager.update()) return;
 
-    // Diagnostic: confirm nativeOnFrame is executing
     static int frameNum = 0;
-    if (frameNum++ % 120 == 0) {
-        LOGI("%s frame=%d gsLen=%d", NATIVE_BUILD_MARKER, frameNum,
-             gameStateData ? env->GetArrayLength(gameStateData) : -1);
-    }
+    frameNum++;
 
     // Clear screen (vivid stadium sky blue gradient)
     glClearColor(0.45f, 0.72f, 0.95f, 1.0f);
@@ -229,6 +225,26 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
                 peek.camera.pos[1] * kScaleZ,
                 peek.camera.fov);
         }
+
+        // Log interpolated render state for diagnostics
+        static int renderLogCounter = 0;
+        if ((renderLogCounter++ % 120) == 0) {
+            int activeRenderIdx = -1;
+            for (int i = 0; i < 22; ++i) {
+                if (peek.players[i].flags & 4) { activeRenderIdx = i; break; }
+            }
+            char rbuf[2048];
+            int roff = 0;
+            roff += snprintf(rbuf + roff, sizeof(rbuf) - roff, "[gamestates] RENDER tick=%u ball=(%.2f,%.2f,%.2f) cam=(%.2f,%.2f,%.2f) active=%d ",
+                               peek.tick, peek.ball.pos[0], peek.ball.pos[1], peek.ball.pos[2],
+                               peek.camera.pos[0], peek.camera.pos[1], peek.camera.pos[2], activeRenderIdx);
+            for (int i = 0; i < 22 && roff < (int)sizeof(rbuf) - 60; ++i) {
+                roff += snprintf(rbuf + roff, sizeof(rbuf) - roff, "p%d=(%.2f,%.2f,a=%u,rY=%.1f,f=%u) ",
+                                 i, peek.players[i].pos[0], peek.players[i].pos[1],
+                                 peek.players[i].anim, peek.players[i].rotY, peek.players[i].flags);
+            }
+            LOGI("%s", rbuf);
+        }
     }
 
     // Get AR matrices
@@ -263,130 +279,13 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     // Render camera background
     gRenderer.drawCameraBackground(gArManager);
 
-    // Always render game (use fallback view if marker not tracked)
-    // Use interpolated state for smooth 20 Hz display
-    static dzfoot::GameStatePacket offlineState;
-    static bool offlineStateInitialized = false;
-
+    // No offline mode — GF is the single source of truth.
+    // If no game state received, render nothing (pitch stays empty).
     dzfoot::GameStatePacket gs;
     if (!gameStateData || env->GetArrayLength(gameStateData) == 0) {
-        if (!offlineStateInitialized) {
-            offlineState = gGameBridge.currentState();
-            offlineStateInitialized = true;
-        }
-        gArManager.clearServerCamera();
-        static int offlineWarnCounter = 0;
-        if ((offlineWarnCounter++ % 120) == 0) {
-            LOGW("[jni_main] No remote game state (offline mode). "
-                 "Ensure GF server is running and Session backend is relaying. "
-                 "gsLen=%d", gameStateData ? env->GetArrayLength(gameStateData) : -1);
-        }
-        // Apply camera-relative rotation to raw joystick input before using it
-        gTouchController.applyCameraRotation(gCamFwdX, gCamFwdZ);
-        const dzfoot::PlayerInputPacket& input = gTouchController.getInput();
-        float speed = 0.05f;
-        offlineState.players[0].pos[0] += input.dirX * speed;
-        offlineState.players[0].pos[1] += input.dirZ * speed;
-        offlineState.players[0].vel[0] = input.dirX * speed;
-        offlineState.players[0].vel[1] = input.dirZ * speed;
-        offlineState.players[0].vel[2] = 0.0f;
-        if (std::fabs(input.dirX) > 0.001f || std::fabs(input.dirZ) > 0.001f) {
-            offlineState.players[0].rotY = std::atan2(input.dirX, input.dirZ);
-            offlineState.players[0].anim = input.buttons & dzfoot::BUTTON_SPRINT ? dzfoot::ANIM_SPRINT : dzfoot::ANIM_WALK;
-        } else {
-            offlineState.players[0].anim = dzfoot::ANIM_IDLE;
-        }
-        if (offlineState.players[0].pos[0] < -1.0f) offlineState.players[0].pos[0] = -1.0f;
-        if (offlineState.players[0].pos[0] >  1.0f) offlineState.players[0].pos[0] = 1.0f;
-        if (offlineState.players[0].pos[1] < -0.43f) offlineState.players[0].pos[1] = -0.43f;
-        if (offlineState.players[0].pos[1] >  0.43f) offlineState.players[0].pos[1] = 0.43f;
-
-        // Ensure player 0 is active + designated so camera follows and renderer shows them
-        offlineState.players[0].flags |= 0x05; // bit0=is_active, bit2=designated
-        // Activate all other players so they render too
-        for (int i = 1; i < 22; ++i) offlineState.players[i].flags |= 0x01;
-        for (int i = 0; i < 3; ++i)  offlineState.officials[i].flags |= 0x01;
-
-        // Formation tables (static for reuse in AI sim)
-        static const float t0x[11] = {-0.90f,-0.70f,-0.70f,-0.70f,-0.70f,
-                                -0.40f,-0.40f,-0.40f,-0.40f,
-                                -0.10f,-0.10f};
-        static const float t0y[11] = { 0.00f, 0.30f,-0.30f, 0.10f,-0.10f,
-                                 0.35f,-0.35f, 0.12f,-0.12f,
-                                 0.20f,-0.20f};
-        static const float t1x[11] = { 0.90f, 0.70f, 0.70f, 0.70f, 0.70f,
-                                 0.40f, 0.40f, 0.40f, 0.40f,
-                                 0.10f, 0.10f};
-        static const float t1y[11] = { 0.00f, 0.30f,-0.30f, 0.10f,-0.10f,
-                                 0.35f,-0.35f, 0.12f,-0.12f,
-                                 0.20f,-0.20f};
-
-        // One-time formation setup
-        for (int i = 0; i < 11; ++i) {
-            if (offlineState.players[i].pos[0] == 0.0f && offlineState.players[i].pos[1] == 0.0f) {
-                offlineState.players[i].pos[0] = t0x[i];
-                offlineState.players[i].pos[1] = t0y[i];
-                offlineState.players[i].team = 0;
-                offlineState.players[i].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
-            }
-            int j = 11 + i;
-            if (offlineState.players[j].pos[0] == 0.0f && offlineState.players[j].pos[1] == 0.0f) {
-                offlineState.players[j].pos[0] = t1x[i];
-                offlineState.players[j].pos[1] = t1y[i];
-                offlineState.players[j].team = 1;
-                offlineState.players[j].role = (i == 0) ? 0 : (i >= 9 ? 9 : 1);
-            }
-        }
-        // Officials
-        offlineState.officials[0].pos[0] = 0.0f;  offlineState.officials[0].pos[1] = 0.45f; offlineState.officials[0].team = 2;
-        offlineState.officials[1].pos[0] = 0.0f;  offlineState.officials[1].pos[1] = -0.45f; offlineState.officials[1].team = 2;
-        offlineState.officials[2].pos[0] = 0.0f;  offlineState.officials[2].pos[1] = 0.0f; offlineState.officials[2].team = 2;
-
-        // Offline AI vs AI simulation: players patrol around formation spots
-        static float simTime = 0.0f;
-        simTime += 0.016f; // ~60 Hz
-        for (int i = 1; i < 22; ++i) {
-            int idx = (i < 11) ? i : (i - 11);
-            float baseX = (i < 11) ? t0x[idx] : t1x[idx];
-            float baseY = (i < 11) ? t0y[idx] : t1y[idx];
-
-            // Unique phase per player so they don't move in unison
-            float phase = i * 1.37f;
-            float patrolX = std::sin(simTime * 0.8f + phase) * 0.18f;
-            float patrolY = std::cos(simTime * 0.6f + phase * 0.8f) * 0.12f;
-
-            float targetX = baseX + patrolX;
-            float targetY = baseY + patrolY;
-
-            // Smooth interpolation toward target
-            float dx = targetX - offlineState.players[i].pos[0];
-            float dy = targetY - offlineState.players[i].pos[1];
-            offlineState.players[i].vel[0] = dx * 0.04f; // frame delta
-            offlineState.players[i].vel[1] = dy * 0.04f;
-            offlineState.players[i].pos[0] += offlineState.players[i].vel[0];
-            offlineState.players[i].pos[1] += offlineState.players[i].vel[1];
-
-            // Update heading and animation based on actual speed
-            float moveSpeed = std::sqrt(offlineState.players[i].vel[0]*offlineState.players[i].vel[0] +
-                                         offlineState.players[i].vel[1]*offlineState.players[i].vel[1]);
-            if (moveSpeed > 0.003f) {
-                offlineState.players[i].rotY = std::atan2(offlineState.players[i].vel[0], offlineState.players[i].vel[1]);
-                offlineState.players[i].anim = (moveSpeed > 0.008f) ? dzfoot::ANIM_RUN : dzfoot::ANIM_WALK;
-            } else {
-                offlineState.players[i].anim = dzfoot::ANIM_IDLE;
-            }
-        }
-
-        // Ball gently orbits the center of the pitch
-        offlineState.ball.pos[0] = std::sin(simTime * 0.35f) * 0.35f;
-        offlineState.ball.pos[1] = std::cos(simTime * 0.25f) * 0.25f;
-        offlineState.ball.pos[2] = 0.25f;
-
-        gs = offlineState;
-    } else {
-        offlineStateInitialized = false; // reset for next offline toggle
-        gs = gGameBridge.getInterpolatedState();
+        return;
     }
+    gs = gGameBridge.getInterpolatedState();
 
     // Detect active player (flags bit 2 = designated/controlled) and sync with controller
     {
@@ -399,7 +298,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
             uint8_t playerIdx = static_cast<uint8_t>(activeIdx % 11);
             gTouchController.setActivePlayer(team, playerIdx);
         } else {
-            // Fallback: player 0 of team 0 (offline mode)
+            // No active player designated by GF yet (e.g. before kickoff)
             gTouchController.setActivePlayer(0, 0);
         }
     }
@@ -450,77 +349,6 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     }
     float ballPos[3] = { gs.ball.pos[0], gs.ball.pos[1], gs.ball.pos[2] };
 
-    // Periodic diagnostic: verify client receives same positions as server logs
-    static int diagCounter = 0;
-    if ((diagCounter++ % 300) == 0) {
-        const float scaleX = gRenderer.getPitchScaleX();
-        const float scaleZ = gRenderer.getPitchScaleZ();
-
-        // Log 1: Mobile scene positions for all 22 players + ball + anim
-        LOGI("[SCENE] tick=%u ball=(%.3f,%.3f,%.3f)", gs.tick,
-             gs.ball.pos[0] * scaleX, gs.ball.pos[1] * scaleZ, gs.ball.pos[2]);
-        for (int t = 0; t < 2; ++t) {
-            char line[512];
-            int off = 0;
-            off += snprintf(line + off, sizeof(line) - off, "[SCENE] T%d ", t);
-            for (int i = 0; i < 11; ++i) {
-                int idx = t * 11 + i;
-                if (off < (int)sizeof(line) - 50) {
-                    off += snprintf(line + off, sizeof(line) - off, "P%d:(%.3f,%.3f,%s) ", idx,
-                                    gs.players[idx].pos[0] * scaleX,
-                                    gs.players[idx].pos[1] * scaleZ,
-                                    animToString(gs.players[idx].anim));
-                }
-            }
-            LOGI("%s", line);
-        }
-
-        // Log 2: Role / position conformity check
-        for (int t = 0; t < 2; ++t) {
-            float minX = 999.0f, maxX = -999.0f;
-            int minIdx = -1, maxIdx = -1;
-            int gkIdx = -1, cfIdx = -1;
-            for (int i = 0; i < 11; ++i) {
-                int idx = t * 11 + i;
-                float x = gs.players[idx].pos[0];
-                if (x < minX) { minX = x; minIdx = idx; }
-                if (x > maxX) { maxX = x; maxIdx = idx; }
-                if (gs.players[idx].role == 0) gkIdx = idx;
-                if (gs.players[idx].role == 9) cfIdx = idx;
-            }
-            // T0 plays left (goal at minX), T1 plays right (goal at maxX)
-            bool gkOK = (t == 0) ? (gkIdx == minIdx) : (gkIdx == maxIdx);
-            bool cfOK = (t == 0) ? (cfIdx == maxIdx) : (cfIdx == minIdx);
-            bool minX_OK = (t == 0) ? (minIdx == gkIdx) : (minIdx == cfIdx);
-            bool maxX_OK = (t == 0) ? (maxIdx == cfIdx) : (maxIdx == gkIdx);
-            LOGI("[CONFORM] T%d GK=%s(P%d) minX=%s(P%d) CF=%s(P%d) maxX=%s(P%d)",
-                 t, gkOK ? "OK" : "ERR", gkIdx, minX_OK ? "OK" : "ERR", minIdx,
-                 cfOK ? "OK" : "ERR", cfIdx, maxX_OK ? "OK" : "ERR", maxIdx);
-        }
-
-        // Log 3: Active player (designated) + ball confirmation
-        int activeIdx = -1;
-        for (int i = 0; i < 22; ++i) {
-            if (gs.players[i].flags & 4) { activeIdx = i; break; }
-        }
-        if (activeIdx >= 0) {
-            const auto& ap = gs.players[activeIdx];
-            LOGI("[ACTIVE] P%d team=%d role=%s pos=(%.3f,%.3f) anim=%s ball=(%.3f,%.3f)",
-                 activeIdx, ap.team, roleToString(ap.role),
-                 ap.pos[0], ap.pos[1], animToString(ap.anim),
-                 gs.ball.pos[0], gs.ball.pos[1]);
-        } else {
-            LOGI("[ACTIVE] none");
-        }
-
-        // Log 4: Keep existing GK diagnostic
-        LOGI("[JNI] scaleX=%.3f scaleZ=%.3f  GK0=(%.3f,%.3f) GK11=(%.3f,%.3f) ball=(%.3f,%.3f)",
-             scaleX, scaleZ,
-             gs.players[0].pos[0], gs.players[0].pos[1],
-             gs.players[11].pos[0], gs.players[11].pos[1],
-             gs.ball.pos[0], gs.ball.pos[1]);
-    }
-
     gTouchController.updateRadar(gs);
     gRenderer.renderScene(gArManager, positions, 25, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
@@ -547,6 +375,13 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     constexpr size_t pktSize = sizeof(dzfoot::PlayerInputPacket);
     uint8_t buf[pktSize];
     gTouchController.serialize(buf, pktSize);
+    const dzfoot::PlayerInputPacket* pkt = reinterpret_cast<const dzfoot::PlayerInputPacket*>(buf);
+    static int inputLogCounter = 0;
+    if ((inputLogCounter++ % 10) == 0) {
+        LOGI("[gamestates] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X magic=0x%04X",
+             pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons,
+             pkt->header.magic);
+    }
     jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);
     return result;

@@ -85,7 +85,6 @@ static GLuint loadAssetTexture(const char* path) {
             int height = bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
             if (width > 0 && height > 0 && len >= 8 + width * height * 4) {
                 tex = uploadRgbaTexture(width, height, bytes + 8);
-                LOGI("Loaded texture %s (%dx%d)", path, width, height);
             }
             env->ReleaseByteArrayElements(arr, data, JNI_ABORT);
         }
@@ -299,8 +298,6 @@ static bool loadStaticGLB(const char* filename, Mesh& outMesh, float* outHalfXZ 
                 if (v.pos[k] > maxP[k]) maxP[k] = v.pos[k];
             }
         }
-        LOGI("Static GLB '%s': verts=%zu bbox=[%.2f,%.2f,%.2f]..[%.2f,%.2f,%.2f]",
-             filename, allVerts.size(), minP[0], minP[1], minP[2], maxP[0], maxP[1], maxP[2]);
         if (outHalfXZ) {
             outHalfXZ[0] = 0.5f * (maxP[0] - minP[0]);
             outHalfXZ[1] = 0.5f * (maxP[2] - minP[2]);
@@ -354,9 +351,6 @@ static bool loadSkinnedGLB(const char* filename, SkinnedMesh& outMesh) {
             float ws = v.boneWeights[0] + v.boneWeights[1] + v.boneWeights[2] + v.boneWeights[3];
             if (ws > maxWeightSum) maxWeightSum = ws;
         }
-        LOGI("Skinned GLB '%s': verts=%zu bbox=[%.2f,%.2f,%.2f]..[%.2f,%.2f,%.2f] maxWeightSum=%.3f",
-             filename, allVerts.size(), minP[0], minP[1], minP[2], maxP[0], maxP[1], maxP[2], maxWeightSum);
-
         outMesh.upload(allVerts, allIndices);
         return true;
     }
@@ -415,23 +409,9 @@ bool PlayerRig::load(const char* filename) {
     if (!scene.skins.empty()) {
         skin = scene.skins[0];
         hasSkin = true;
-        LOGI("PlayerRig: skin loaded with %zu joints", skin.jointIndices.size());
     }
     // Store embedded animation clips (these match what the user verified in Three.js)
     animations = std::move(scene.animations);
-    LOGI("PlayerRig: %zu embedded animations", animations.size());
-    for (size_t a = 0; a < animations.size(); ++a) {
-        LOGI("  Anim[%zu] '%s' dur=%.2fs channels=%zu samplers=%zu", a,
-             animations[a].name.c_str(), animations[a].duration,
-             animations[a].channels.size(), animations[a].samplers.size());
-        // Log channel targets for first clip to diagnose targetNode mapping
-        if (a == 0) {
-            for (size_t c = 0; c < animations[a].channels.size(); ++c) {
-                const auto& ch = animations[a].channels[c];
-                LOGI("    ch[%zu] targetNode=%d path=%d sampler=%d", c, ch.targetNode, ch.path, ch.sampler);
-            }
-        }
-    }
     defaultSkinTex = loadAssetTexture("beta2/media/objects/players/textures/skin.jpg");
     skinTex = defaultSkinTex ? defaultSkinTex : generateProceduralTexture(0);
     for (int s = 0; s < 7; ++s) {
@@ -442,17 +422,6 @@ bool PlayerRig::load(const char* filename) {
     shoeTex = loadAssetTexture("beta2/media/objects/players/textures/shoe.jpg");
     if (!shoeTex) shoeTex = generateProceduralTexture(2);
     shortTex = kitTex ? kitTex : generateProceduralTexture(3);
-
-    LOGI("PlayerRig: loaded '%s' with %zu nodes", filename, nodes.size());
-    // Only log the first 30 rig/mesh nodes; skip the 1100+ empty material/texture nodes
-    for (size_t i = 0; i < std::min(nodes.size(), size_t(30)); ++i) {
-        const auto& rn = nodes[i];
-        if (!rn.name.empty() || rn.staticMeshes.size() > 0) {
-            LOGI("  Node[%zu] name='%s' parent=%d bone=%d meshes=%zu bindS=(%.3f,%.3f,%.3f)",
-                 i, rn.name.c_str(), rn.parentIndex, rn.boneIndex, rn.staticMeshes.size(),
-                 rn.bindS[0], rn.bindS[1], rn.bindS[2]);
-        }
-    }
     return true;
 }
 
@@ -577,8 +546,7 @@ bool PlayerRig::loadBody(const char* bodyGlb) {
         hairTexs[h] = generateHairTexture(h);
     }
 
-    LOGI("PlayerRig: modular body '%s' loaded with %zu nodes, %zu anims",
-         bodyGlb, nodes.size(), animations.size());
+    (void)bodyGlb; // unused in release build
     return true;
 }
 
@@ -587,7 +555,6 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
     if (!gAssetManager) return false;
     std::vector<uint8_t> bytes = AssetLoader::loadAsBytes(gAssetManager, partGlb);
     if (bytes.empty()) {
-        LOGI("PlayerRig: optional part %s not found, skipping", partGlb);
         return true; // not fatal — part may be intentionally missing (bald, none)
     }
     GLBLoader loader;
@@ -597,7 +564,6 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
         return false;
     }
     if (scene.meshes.empty()) {
-        LOGI("PlayerRig: part %s has no mesh (empty), skipping", partGlb);
         return true;
     }
 
@@ -640,8 +606,6 @@ bool PlayerRig::attachPart(const char* partGlb, const char* parentBoneName,
                 std::memcpy(mp.baseColor, scene.materials[prim.materialIndex].baseColor, 4 * sizeof(float));
             }
             attachedMeshes.push_back(std::move(mp));
-            LOGI("PlayerRig: attached part %s to '%s' (verts=%zu scale=%.1f shift=%.2f)",
-                 partGlb, parentBoneName, prim.vertices.size(), scale, shiftY);
         }
     }
     return true;
@@ -682,10 +646,7 @@ bool PlayerRig::loadModular(const AvatarConfig& cfg) {
         attachPart(beardPath, "neck", "beard");
     }
 
-    static const char* hairLabels[6] = {"short","long","mohawk","curly","ponytail","bald"};
-    const char* hairLabel = (cfg.hairStyle < 6) ? hairLabels[cfg.hairStyle] : "?";
-    LOGI("PlayerRig: modular loaded (body=%s hair=%d(%s) beard=%d skin=%d height=%.2f num=%d)",
-         bt, cfg.hairStyle, hairLabel, cfg.beardStyle, cfg.skinColor, cfg.height, cfg.playerNumber);
+    (void)bt; // unused in release build
     return true;
 }
 
@@ -863,8 +824,6 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
                 std::memcpy(&scratchCurS[ch.targetNode * 3], val, 3 * sizeof(float));
             }
         }
-    } else if (animDbg) {
-        LOGI("[animDbg] animations EMPTY (parse failed or not loaded)");
     }
 
     // Sample previous animation if we are blending (crossfade)
@@ -994,26 +953,9 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         lastShader = shader;
     }
 
-    // Send shadow / fog / time uniforms once per player draw
-    if (blobShadowLoc >= 0) {
-        glUniform1f(blobShadowLoc, 0.0f);
-    }
-    if (lightSpaceLoc >= 0 && lightSpaceMatrix) {
-        glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
-    }
-    if (fogDensityLoc >= 0) {
-        glUniform1f(fogDensityLoc, 0.025f);
-    }
-    if (shadowMapLoc >= 0 && shadowTex) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, shadowTex);
-        glUniform1i(shadowMapLoc, 1);
-    }
+    // Set material type once per player (shader fast path — no shadow/fog/time)
     if (matLoc >= 0) {
-        glUniform1i(matLoc, 0); // force default material (specular + rim light for players)
-    }
-    if (timeLoc >= 0) {
-        glUniform1f(timeLoc, static_cast<float>(nowMs() * 0.001));
+        glUniform1i(matLoc, 0);
     }
 
     // 5. Draw each limb with its own transform (segmented rigid-body animation)
@@ -1202,13 +1144,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
             drawCount++;
         }
     }
-    if (drawCount > 0 && playerIndex == 0) {
-        static int drawLogCounter = 0;
-        if ((drawLogCounter++ % 60) == 0) {
-            LOGI("[PlayerRig::draw] P%d drawCount=%d worldPos=(%.2f,%.2f,%.2f)",
-                 playerIndex, drawCount, playerWorld[0], playerWorld[1], playerWorld[2]);
-        }
-    }
+    (void)drawCount; (void)playerIndex; (void)playerWorld;
 }
 
 static void loadFallbackSkinnedPlayer(SkinnedMesh& outMesh) {
@@ -1314,155 +1250,24 @@ out vec4 outColor;
 uniform vec3 u_Color;
 uniform sampler2D u_BaseTexture;
 uniform float u_UseTexture;
-uniform float u_Time;
 uniform int u_MaterialType;
-
-// FIFA-quality PBR helpers
-float D_GGX(float NoH, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float denom = NoH * NoH * (a2 - 1.0) + 1.0;
-    return a2 / (3.14159265 * denom * denom);
-}
-float V_SmithGGX(float NoV, float NoL, float roughness) {
-    float a = roughness * roughness;
-    float ggxV = NoV * (1.0 - a) + a;
-    float ggxL = NoL * (1.0 - a) + a;
-    return 0.5 / (ggxV + ggxL);
-}
-vec3 F_Schlick(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
-}
 
 void main() {
     vec3 N = normalize(v_Normal);
-    vec3 V = normalize(-v_WorldPos);
-    float NoV = max(dot(N, V), 0.0);
+    vec3 L1 = normalize(vec3(0.35, 0.85, 0.45));
+    vec3 sunColor = vec3(1.1, 1.02, 0.94);
+    vec3 viewDir = normalize(-v_WorldPos);
 
-    // ─── Base color & material detection ─────────────────────────
     vec3 baseColor = u_Color;
-    float roughness = 0.75;   // default: fabric/kit
-    float metallic = 0.0;
-    float sss = 0.0;          // subsurface scattering
-
     if (u_UseTexture > 0.5) {
-        vec3 texColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        baseColor = texColor * u_Color;
+        baseColor = texture(u_BaseTexture, v_TexCoord).rgb * u_Color;
     }
 
-    if (u_MaterialType == 1) { // Skin/Face/Head
-        roughness = 0.45;
-        sss = 0.60; // skin subsurface
-    } else if (u_MaterialType == 2 || u_MaterialType == 3) { // Hair / Beard
-        roughness = 0.35; // high spec hair
-    }
-
-    // ─── Lights ────────────────────────────────────────────────
-    vec3 sunDir = normalize(vec3(0.35, 0.85, 0.45));
-    vec3 sunColor = vec3(1.10, 1.02, 0.94);
-    vec3 fillDir = normalize(vec3(-0.4, 0.3, -0.2));
-    vec3 fillColor = vec3(0.35, 0.40, 0.52);
-
-    // Spotlights (4 corners)
-    vec3 spotDirs[4] = vec3[](
-        normalize(vec3( 30.0, 20.0,  20.0)),
-        normalize(vec3(-30.0, 20.0,  20.0)),
-        normalize(vec3( 30.0, 20.0, -20.0)),
-        normalize(vec3(-30.0, 20.0, -20.0))
-    );
-    vec3 spotColor = vec3(1.0, 0.95, 0.85) * 0.55;
-
-    // ─── PBR shading per light ─────────────────────────────────
-    vec3 F0 = mix(vec3(0.04), baseColor, metallic);
-    vec3 diffuse = baseColor * (1.0 - metallic);
-    vec3 lit = vec3(0.0);
-
-    // Sun
-    {
-        vec3 L = sunDir;
-        vec3 H = normalize(L + V);
-        float NoL = max(dot(N, L), 0.0);
-        float NoH = max(dot(N, H), 0.0);
-        float D = D_GGX(NoH, roughness);
-        float Vis = V_SmithGGX(NoV, NoL, roughness);
-        vec3 F = F_Schlick(max(dot(H, V), 0.0), F0);
-        vec3 spec = D * Vis * F;
-        vec3 kD = (1.0 - F) * (1.0 - metallic);
-        // Skin subsurface: warp normal toward light
-        vec3 sssN = normalize(mix(N, L, sss * 0.35));
-        float sssDiff = max(dot(sssN, L), 0.0);
-        lit += (kD * diffuse * mix(NoL, sssDiff, sss) + spec) * sunColor * 1.15;
-    }
-
-    // Fill (sky)
-    {
-        vec3 L = fillDir;
-        float NoL = max(dot(N, L), 0.0);
-        lit += diffuse * NoL * fillColor * 0.50;
-    }
-    // Spots (simplified)
-    for (int i = 0; i < 4; i++) {
-        float NoL = max(dot(N, spotDirs[i]), 0.0);
-        lit += diffuse * NoL * spotColor * 0.15;
-    }
-
-    // Ambient / IBL approximation
-    vec3 ambient = diffuse * 0.22;
-    // Horizon boost: brighter near top (sky), darker near bottom (ground bounce)
-    float horizon = N.y * 0.5 + 0.5;
-    ambient *= mix(vec3(0.65, 0.70, 0.75), vec3(1.0, 0.98, 0.94), horizon);
-    lit += ambient;
-
-    // ─── Rim / Fresnel ─────────────────────────────────────────
-    float rim = pow(1.0 - NoV, 4.0);
-    vec3 rimColor = vec3(0.25, 0.30, 0.40) * rim * 0.4;
-    // Sweat sheen on skin (thin oily layer)
-    float sheen = pow(1.0 - NoV, 6.0) * sss * 0.5;
-    rimColor += vec3(0.9, 0.85, 0.75) * sheen;
-
-    // ─── Volumetric spot glow ────────────────────────────────
-    float volumeGlow = 0.0;
-    vec3 towerPositions[4] = vec3[](
-        vec3( 10.0, 3.80,  8.0), vec3(-10.0, 3.80,  8.0),
-        vec3( 10.0, 3.80, -8.0), vec3(-10.0, 3.80, -8.0)
-    );
-    for (int i = 0; i < 4; i++) {
-        vec3 toFrag = v_WorldPos - towerPositions[i];
-        float dist = length(toFrag);
-        vec3 coneDir = normalize(vec3(0.0, -0.4, 0.0) - towerPositions[i]);
-        float coneAngle = dot(normalize(toFrag), coneDir);
-        if (coneAngle > 0.82) {
-            float intensity = pow((coneAngle - 0.82) / 0.18, 2.5);
-            volumeGlow += (intensity * 0.07) / (1.0 + dist * 0.25);
-        }
-    }
-
-    vec3 finalColor = lit + rimColor + vec3(volumeGlow) * vec3(1.0, 0.93, 0.82);
-
-    // ─── Filmic tone mapping (ACES approx) ───────────────────
-    vec3 a = vec3(2.51, 2.51, 2.51);
-    vec3 b = vec3(0.03, 0.03, 0.03);
-    vec3 c = vec3(2.43, 2.43, 2.43);
-    vec3 d = vec3(0.59, 0.59, 0.59);
-    vec3 e = vec3(0.14, 0.14, 0.14);
-    vec3 outCol = clamp((finalColor * (a * finalColor + b)) / (finalColor * (c * finalColor + d) + e), 0.0, 1.0);
-
-    // ─── Bloom (extract bright areas, nice soft glow without brightening) ─────────
-    vec3 bloom = max(outCol - vec3(0.60), vec3(0.0)) * vec3(0.25, 0.20, 0.14);
-    outCol = outCol * 0.92 + bloom;
-
-    // ─── Vignette + chromatic aberration hint ─────────────────
-    // (only in post, not per-object, skip for performance)
-
-    // ─── Film grain ──────────────────────────────────────────
-    float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 + u_Time * 30.0) - 0.5;
-    outCol += grain * 0.015;
-
-    // Slight saturation boost for TV broadcast look
-    float lum = dot(outCol, vec3(0.299, 0.587, 0.114));
-    outCol = mix(vec3(lum), outCol, 1.34);
-
-    outColor = vec4(outCol, 1.0);
+    float diff = max(dot(N, L1), 0.0);
+    vec3 H = normalize(L1 + viewDir);
+    float spec = pow(max(dot(N, H), 0.0), 32.0) * 0.4;
+    vec3 lit = baseColor * (diff * sunColor + vec3(0.25)) + vec3(spec);
+    outColor = vec4(clamp(lit, 0.0, 1.0), 1.0);
 }
 )";
 
@@ -1619,106 +1424,13 @@ vec3 ballPattern() {
 }
 
 vec3 stadiumShader() {
-    // Height Y boundaries from stadium_test.glb:
-    //  - Y > 15.0: Tower-top floodlights (blazing emissive glow)
-    //  - 10.0 < Y <= 15.0: Roof structures and supporting trusses
-    //  - 6.6 < Y <= 10.0: Upper promenade and walkways
-    //  - 1.0 < Y <= 6.6: Seating stands (tiers of colored blocks)
-    //  - Y <= 1.0: Pitch apron and advertising boards
-
-    if (v_LocalPos.y > 15.0) {
-        // Warm white floodlight glow (reduced to avoid excessive bloom)
-        return vec3(1.2, 1.1, 0.85);
-    } 
-    
-    if (v_LocalPos.y > 10.0) {
-        // Roof panels and steel structural trusses
-        float trussX = step(0.90, fract(v_LocalPos.x * 0.5));
-        float trussZ = step(0.90, fract(v_LocalPos.z * 0.5));
-        vec3 steelFrame = vec3(0.22, 0.25, 0.28);
-        vec3 canvasPanel = vec3(0.88, 0.88, 0.84);
-        return mix(canvasPanel, steelFrame, clamp(trussX + trussZ, 0.0, 1.0));
-    } 
-    
-    if (v_LocalPos.y > 6.6) {
-        // Promenade stairs and concrete walls
-        float steps = step(0.5, fract(v_LocalPos.y * 3.0));
-        vec3 concrete = vec3(0.42, 0.44, 0.46);
-        return concrete * mix(0.92, 1.08, steps);
-    } 
-    
-    if (v_LocalPos.y > 1.0) {
-        // Seating stands: FIFA-quality procedural animated crowd
-        float angle = atan(v_LocalPos.z, v_LocalPos.x);
-        float radius = length(v_LocalPos.xz);
-        float seatRow = fract(v_LocalPos.y * 2.4);
-        float seatBlock = step(0.25, sin(angle * 32.0));
-
-        // National colour fan sections with variation
-        float section = floor(angle * 6.0 / 3.14159);
-        vec3 red    = vec3(0.75, 0.08, 0.08);
-        vec3 green  = vec3(0.08, 0.55, 0.12);
-        vec3 white  = vec3(0.92, 0.92, 0.90);
-        vec3 blue   = vec3(0.08, 0.20, 0.65);
-        vec3 yellow = vec3(0.90, 0.75, 0.05);
-        float m = mod(section, 5.0);
-        vec3 seatCol = (m < 1.0) ? red : (m < 2.0) ? green : (m < 3.0) ? white : (m < 4.0) ? blue : yellow;
-
-        // Per-seat hash for individual spectators
-        float seatHash = fract(sin(dot(floor(v_LocalPos.xz * 22.0), vec2(12.9898, 78.233))) * 43758.5453);
-        float seatNoise = step(0.30, seatHash);
-        float rowLight = step(0.5, seatRow);
-        vec3 concreteStairs = vec3(0.34, 0.36, 0.40);
-        vec3 seats = mix(concreteStairs, seatCol * (0.72 + rowLight * 0.28), seatBlock * seatNoise);
-
-        // Animated crowd cheering — synchronized waves per section
-        float cheer = sin(section * 2.5 + u_Time * 3.0) * 0.5 + 0.5;
-        cheer = pow(cheer, 3.0);
-        float standUp = step(0.85, seatHash) * cheer;
-        seats += vec3(0.30, 0.28, 0.22) * standUp * seatBlock;
-
-        // Phone flashlight effect (scattered bright dots when cheering peaks)
-        float flashlight = step(0.97, seatHash) * step(0.6, cheer);
-        seats += vec3(0.80, 0.75, 0.60) * flashlight * seatBlock;
-
-        return seats;
-    } 
-    
-    // Pitch apron and advertising panels (Y <= 1.0)
-    if (v_LocalPos.y > 0.15) {
-        float x = v_LocalPos.x;
-        float y = v_LocalPos.y;
-        float t = u_Time * 1.2;
-        float panelIndex = floor(x * 0.08);
-        float px = fract(x * 0.08);
-        float py = (y - 0.15) / 0.85;
-
-        // LED dot grid
-        float ledGrid = step(0.12, fract(px * 120.0)) * step(0.12, fract(py * 20.0));
-        vec3 ledOff = vec3(0.02, 0.02, 0.03);
-        vec3 ledColor = ledOff;
-
-        // 4 club brands rotating
-        int brand = int(mod(panelIndex + floor(u_Time * 0.12), 4.0));
-
-        vec3 texColor = vec3(0.0);
-        if (brand == 0) {
-            texColor = texture(u_AdboardTex0, vec2(px, 1.0 - py)).rgb;
-        } else if (brand == 1) {
-            texColor = texture(u_AdboardTex1, vec2(px, 1.0 - py)).rgb;
-        } else if (brand == 2) {
-            texColor = texture(u_AdboardTex2, vec2(px, 1.0 - py)).rgb;
-        } else {
-            texColor = texture(u_AdboardTex3, vec2(px, 1.0 - py)).rgb;
-        }
-
-        vec3 on = texColor * (0.85 + 0.15 * ledGrid);
-        ledColor = mix(ledOff, on, 0.96);
-        // Beautiful bright emissive LED display
-        return ledColor * 1.25;
-    }
-    
-    return vec3(0.16, 0.18, 0.20); // Gravel/dark concrete ground around the pitch
+    // Static simplified stadium (no real-time crowd anim / LED textures for mobile perf)
+    if (v_LocalPos.y > 15.0) return vec3(1.2, 1.1, 0.85);          // floodlights
+    if (v_LocalPos.y > 10.0) return vec3(0.55, 0.57, 0.60);       // roof
+    if (v_LocalPos.y > 6.6)  return vec3(0.42, 0.44, 0.46);      // concrete
+    if (v_LocalPos.y > 1.0)  return vec3(0.55, 0.10, 0.12);       // crowd (static red)
+    if (v_LocalPos.y > 0.15) return vec3(0.05, 0.05, 0.08);       // adboards
+    return vec3(0.16, 0.18, 0.20);                                // ground
 }
 
 vec4 goalShader(vec3 lightColor) {
@@ -1740,20 +1452,10 @@ vec4 goalShader(vec3 lightColor) {
 float sampleShadow(vec4 shadowCoord) {
     vec3 proj = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
-
-    // 3x3 PCF with 4096 shadow map for crisp, professional player silhouettes
-    // Unpack depth from RG channels (16-bit precision)
-    vec2 texelSize = vec2(1.0 / 4096.0);
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            vec4 samp = texture(u_ShadowMap, proj.xy + offset);
-            float closest = samp.r + samp.g / 255.0;
-            shadow += (proj.z > closest + 0.0003) ? 0.0 : 1.0;
-        }
-    }
-    return shadow / 9.0;
+    // 1-sample shadow (mobile fast path — PCF 3x3 was destroying fill-rate)
+    vec4 samp = texture(u_ShadowMap, proj.xy);
+    float closest = samp.r + samp.g / 255.0;
+    return (proj.z > closest + 0.001) ? 0.0 : 1.0;
 }
 
 vec3 acesTonemap(vec3 x) {
@@ -1773,197 +1475,48 @@ vec3 applyFog(vec3 color, float dist) {
 
 void main() {
     vec3 N = normalize(v_Normal);
-    vec3 viewDir = normalize(-v_WorldPos);
-    float NoV = max(dot(N, viewDir), 0.0);
-
-    // ─── Lights ─────────────────────────────────────────────────
     vec3 L1 = normalize(vec3(0.35, 0.85, 0.45));
-    vec3 sunColor = vec3(1.10, 1.02, 0.94);
-    vec3 L2 = normalize(vec3(-0.4, 0.3, -0.2));
-    vec3 fillColor = vec3(0.35, 0.40, 0.52);
+    vec3 sunColor = vec3(1.1, 1.02, 0.94);
+    vec3 viewDir = normalize(-v_WorldPos);
 
-    vec3 spotDirs[4] = vec3[](
-        normalize(vec3( 30.0, 20.0,  20.0)),
-        normalize(vec3(-30.0, 20.0,  20.0)),
-        normalize(vec3( 30.0, 20.0, -20.0)),
-        normalize(vec3(-30.0, 20.0, -20.0))
-    );
-    vec3 spotColor = vec3(1.0, 0.95, 0.85) * 0.5;
-
-    // ─── Material setup ─────────────────────────────────────────
     vec3 baseColor;
     float alpha = 1.0;
-    float roughness = 0.75;
-    float metallic = 0.0;
-    float specPower = 32.0;
-    float specIntensity = 0.5;
 
     if (u_MaterialType == 1) {
-        // Terrain: blend procedural grass with highly-tiled seamless grass texture for realistic micro-details
-        N = grassNormal();
-        vec3 proceduralGrass = grassPitch();
-        if (u_UseTexture > 0.5) {
-            vec3 texColor = texture(u_BaseTexture, v_TexCoord * 24.0).rgb;
-            baseColor = proceduralGrass * mix(vec3(1.0), texColor * 1.4, 0.35);
-        } else {
-            baseColor = proceduralGrass;
-        }
-        roughness = 0.95; // matte grass
-        metallic = 0.0;
-        specPower = 8.0;
-        specIntensity = 0.15;
-
-        // Roof + floodlight shadow
-        if (u_UseOverlay > 0.5) {
-            // Compute non-tiling UV coordinates mapping exactly once over the pitch [0, 1]
-            vec2 pitchUV = v_LocalPos.xz / (u_PitchHalf * 2.0) + 0.5;
-            vec2 overlayUV = vec2(pitchUV.x, 1.0 - pitchUV.y);
-            vec4 overlaySample = texture(u_OverlayTexture, overlayUV);
-            // Filter out blurry low-resolution white pitch lines from overlay.png to avoid double lines.
-            // Keep dark shadows and AO, but discard bright white pixels representing overlay lines.
-            float isOverlayLine = step(0.55, overlaySample.r) * step(0.55, overlaySample.g) * step(0.55, overlaySample.b);
-            baseColor = mix(baseColor, overlaySample.rgb, overlaySample.a * (1.0 - isOverlayLine));
-        } else {
-            float roofShadow = smoothstep(-8.0, 0.0, v_WorldPos.z) * smoothstep(8.0, 0.0, v_WorldPos.z);
-            roofShadow *= smoothstep(-12.0, -4.0, v_WorldPos.x) * 0.35;
-            float floodShadow = 0.0;
-            for (int i = 0; i < 4; i++) {
-                vec3 tpos = vec3((i < 2 ? 10.0 : -10.0), 3.8, (i == 0 || i == 2) ? 8.0 : -8.0);
-                float d = length(v_WorldPos.xz - tpos.xz);
-                floodShadow += smoothstep(18.0, 6.0, d) * 0.15;
-            }
-            float shadowMul = 1.0 - clamp(roofShadow + floodShadow, 0.0, 0.55);
-            baseColor *= shadowMul;
-        }
+        baseColor = grassPitch();
     } else if (u_MaterialType == 2) {
-        vec3 gLight = vec3(0.5); // simplified light for goal
-        vec4 g = goalShader(gLight);
-        baseColor = g.rgb;
-        alpha = g.a;
-        roughness = 0.3;
-        specPower = 64.0;
-        specIntensity = 0.8;
+        vec4 g = goalShader(vec3(0.5));
+        baseColor = g.rgb; alpha = g.a;
     } else if (u_MaterialType == 3) {
-        // Ball: leather material
-        if (u_UseTexture > 0.5) {
-            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        } else {
-            baseColor = ballPattern();
-        }
-        roughness = 0.35; // shiny leather
-        metallic = 0.0;
-        specPower = 48.0;
-        specIntensity = 0.6;
-    } else if (u_MaterialType == 5) {
-        // Player skin / face / head
-        if (u_UseTexture > 0.5) {
-            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        } else {
-            baseColor = u_Color;
-        }
-        roughness = 0.45;
-        specPower = 24.0;
-        specIntensity = 0.35;
-    } else if (u_MaterialType == 6) {
-        // Player hair
-        if (u_UseTexture > 0.5) {
-            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        } else {
-            baseColor = u_Color;
-        }
-        roughness = 0.30;
-        specPower = 48.0;
-        specIntensity = 0.55;
-    } else if (u_MaterialType == 7) {
-        // Player beard (same as hair, slightly rougher)
-        if (u_UseTexture > 0.5) {
-            baseColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        } else {
-            baseColor = u_Color;
-        }
-        roughness = 0.40;
-        specPower = 32.0;
-        specIntensity = 0.40;
+        baseColor = (u_UseTexture > 0.5) ? texture(u_BaseTexture, v_TexCoord).rgb : ballPattern();
     } else if (u_MaterialType == 4) {
         baseColor = stadiumShader();
-        roughness = 0.9;
-        specPower = 4.0;
-        specIntensity = 0.1;
+    } else if (u_MaterialType == 5) {
+        baseColor = (u_UseTexture > 0.5) ? texture(u_BaseTexture, v_TexCoord).rgb : u_Color;
+    } else if (u_MaterialType == 6) {
+        baseColor = (u_UseTexture > 0.5) ? texture(u_BaseTexture, v_TexCoord).rgb : u_Color;
+    } else if (u_MaterialType == 7) {
+        baseColor = (u_UseTexture > 0.5) ? texture(u_BaseTexture, v_TexCoord).rgb : u_Color;
     } else if (u_UseTexture > 0.5) {
-        vec3 texColor = texture(u_BaseTexture, v_TexCoord).rgb;
-        baseColor = texColor * u_Color;
+        baseColor = texture(u_BaseTexture, v_TexCoord).rgb * u_Color;
     } else {
         baseColor = u_Color;
     }
 
-    // ─── PBR-ish lighting ─────────────────────────────────────
-    float diff1 = max(dot(N, L1), 0.0);
-    float diff2 = max(dot(N, L2), 0.0);
-
-    float spotDiff = 0.0;
-    for (int i = 0; i < 4; i++) {
-        spotDiff += max(dot(N, spotDirs[i]), 0.0) * 0.25;
-    }
-
-    float ledDiff = max(dot(N, normalize(vec3( 0.8, 0.1, 0.6))), 0.0) * 0.05
-                  + max(dot(N, normalize(vec3(-0.8, 0.1, 0.6))), 0.0) * 0.05;
-
-    float amb = 0.22; // lowered from 0.35
-    float light = diff1 * 0.95 + diff2 * 0.22 + spotDiff * 0.30 + ledDiff + amb; // adjusted slightly to avoid overexposure
-
-    // Shadow mapping (very strong contrast for visible player silhouettes)
-    float shadow = sampleShadow(v_ShadowCoord);
-    light = mix(light * 0.05, light, shadow);
-
-    // Specular Blinn-Phong
+    // Simple Lambert + Blinn-Phong (mobile fast path)
+    float diff = max(dot(N, L1), 0.0);
     vec3 H = normalize(L1 + viewDir);
-    float spec = pow(max(dot(N, H), 0.0), specPower) * specIntensity;
+    float spec = pow(max(dot(N, H), 0.0), 32.0) * 0.4;
+    vec3 lit = baseColor * (diff * sunColor + vec3(0.25)) + vec3(spec);
 
-    // Rim
-    float rim = pow(1.0 - NoV, 4.0) * 0.3;
-
-    // Volumetric spotlight dust glow
-    float volumeGlow = 0.0;
-    vec3 towerPositions[4] = vec3[](
-        vec3( 10.0, 3.80,  8.0), vec3(-10.0, 3.80,  8.0),
-        vec3( 10.0, 3.80, -8.0), vec3(-10.0, 3.80, -8.0)
-    );
-    for (int i = 0; i < 4; i++) {
-        vec3 toFrag = v_WorldPos - towerPositions[i];
-        float dist = length(toFrag);
-        vec3 coneDir = normalize(vec3(0.0, -0.4, 0.0) - towerPositions[i]);
-        float coneAngle = dot(normalize(toFrag), coneDir);
-        if (coneAngle > 0.82) {
-            float intensity = pow((coneAngle - 0.82) / 0.18, 2.5);
-            volumeGlow += (intensity * 0.03) / (1.0 + dist * 0.25);
-        }
+    // Simple fog
+    if (u_FogDensity > 0.0) {
+        vec3 fogColor = vec3(0.62, 0.66, 0.72);
+        float fogAmount = 1.0 - exp(-length(v_WorldPos) * u_FogDensity);
+        lit = mix(lit, fogColor, fogAmount);
     }
 
-    vec3 lit = baseColor * light + vec3(spec * shadow) + vec3(rim * 0.4) + vec3(volumeGlow) * vec3(1.0, 0.93, 0.82);
-
-    // ─── Filmic tone mapping (ACES) ───────────────────────────
-    vec3 tm = acesTonemap(lit);
-
-    // ─── Bloom (extract bright areas, nice soft glow without brightening) ─────────
-    vec3 bloom = max(tm - vec3(0.60), vec3(0.0)) * vec3(0.25, 0.20, 0.14);
-    vec3 finalColor = tm * 0.92 + bloom;
-
-    // ─── Vignette (screen-space) ────────────────────────────────
-    // Approximate using world distance from center (works for all materials)
-    float distFromCenter = length(v_WorldPos.xz) * 0.015;
-    float vignette = 1.0 - smoothstep(0.4, 1.2, distFromCenter) * 0.35;
-    finalColor *= vignette;
-
-    // ─── Film grain + broadcast saturation ─────────────────────
-    float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 + u_Time * 30.0) - 0.5;
-    finalColor += grain * 0.012;
-    float lum = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    finalColor = mix(vec3(lum), finalColor, 1.34);
-
-    // ─── Fog ────────────────────────────────────────────────────
-    finalColor = applyFog(finalColor, length(v_WorldPos));
-
-    outColor = vec4(finalColor, alpha);
+    outColor = vec4(clamp(lit, 0.0, 1.0), alpha);
 }
 )";
 
@@ -2005,6 +1558,27 @@ out vec4 outColor;
 uniform vec4 u_Color;
 void main() {
     outColor = u_Color;
+}
+)";
+
+// ─── Blit shader (full-screen quad for reduced-resolution FBO) ───
+static const char* BLIT_VERT = R"(#version 300 es
+precision mediump float;
+layout(location = 0) in vec2 a_Position;
+layout(location = 1) in vec2 a_TexCoord;
+out vec2 v_TexCoord;
+void main() {
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+    v_TexCoord = a_TexCoord;
+}
+)";
+static const char* BLIT_FRAG = R"(#version 300 es
+precision mediump float;
+in vec2 v_TexCoord;
+out vec4 outColor;
+uniform sampler2D u_Texture;
+void main() {
+    outColor = texture(u_Texture, v_TexCoord);
 }
 )";
 
@@ -2099,7 +1673,33 @@ void ARRenderer::init() {
     staticShader_ = Shader::compile(STATIC_VERT, STATIC_FRAG);
     shadowShader_ = Shader::compile(SHADOW_VERT, SHADOW_FRAG);
     uiShader_ = Shader::compile(UI_VERT, UI_FRAG);
-    LOGI("[initTiming] Shaders: %.1f ms", nowMs() - t0);
+    blitShader_ = Shader::compile(BLIT_VERT, BLIT_FRAG);
+    (void)t0; // timing logs removed
+
+    // Cache uniform locations once — glGetUniformLocation is extremely expensive on mobile drivers
+    blitTexLoc_ = glGetUniformLocation(blitShader_, "u_Texture");
+    staticMvpLoc_         = glGetUniformLocation(staticShader_, "u_ModelViewProj");
+    staticModelLoc_       = glGetUniformLocation(staticShader_, "u_ModelMatrix");
+    staticColLoc_         = glGetUniformLocation(staticShader_, "u_Color");
+    staticMatLoc_         = glGetUniformLocation(staticShader_, "u_MaterialType");
+    staticPitchHalfLoc_   = glGetUniformLocation(staticShader_, "u_PitchHalf");
+    staticUseTexLoc_      = glGetUniformLocation(staticShader_, "u_UseTexture");
+    staticTexLoc_         = glGetUniformLocation(staticShader_, "u_BaseTexture");
+    staticUseOverlayLoc_  = glGetUniformLocation(staticShader_, "u_UseOverlay");
+    staticOverlayTexLoc_  = glGetUniformLocation(staticShader_, "u_OverlayTexture");
+    staticTimeLoc_        = glGetUniformLocation(staticShader_, "u_Time");
+    staticLightSpaceLoc_  = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
+    staticShadowMapLoc_   = glGetUniformLocation(staticShader_, "u_ShadowMap");
+    staticFogDensityLoc_  = glGetUniformLocation(staticShader_, "u_FogDensity");
+    staticAdboardLocs_[0] = glGetUniformLocation(staticShader_, "u_AdboardTex0");
+    staticAdboardLocs_[1] = glGetUniformLocation(staticShader_, "u_AdboardTex1");
+    staticAdboardLocs_[2] = glGetUniformLocation(staticShader_, "u_AdboardTex2");
+    staticAdboardLocs_[3] = glGetUniformLocation(staticShader_, "u_AdboardTex3");
+
+    uiOrthoLoc_ = glGetUniformLocation(uiShader_, "u_Ortho");
+    uiColorLoc_ = glGetUniformLocation(uiShader_, "u_Color");
+
+    shadowMvpLoc_ = glGetUniformLocation(shadowShader_, "u_ModelViewProj");
 
     glGenBuffers(1, &uiVbo_);
 
@@ -2108,32 +1708,32 @@ void ARRenderer::init() {
     if (!pitchTex_) pitchTex_ = loadAssetTexture("beta2/media/textures/pitch/pitch_01.png");
     if (!pitchTex_) pitchTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
     ballTex_ = loadAssetTexture("beta2/media/objects/balls/ball.jpg");
-    LOGI("[initTiming] ballTex: %.1f ms", nowMs() - t0); t0 = nowMs();
-    stadiumTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
-    LOGI("[initTiming] stadiumTex: %.1f ms", nowMs() - t0); t0 = nowMs();
-    crowdTex_ = loadAssetTexture("beta2/media/textures/stadium/crowd01.png");
-    LOGI("[initTiming] crowdTex: %.1f ms", nowMs() - t0); t0 = nowMs();
-    goalnettingTex_ = loadAssetTexture("beta2/media/textures/stadium/goalnetting.png");
-    LOGI("[initTiming] goalnettingTex: %.1f ms", nowMs() - t0); t0 = nowMs();
+    // Stadium textures disabled while stadium rendering is off (performance)
+    // t0 = nowMs();
+    // stadiumTex_ = loadAssetTexture("beta2/media/textures/stadium/greenish_floor.png");
+    // t0 = nowMs();
+    // crowdTex_ = loadAssetTexture("beta2/media/textures/stadium/crowd01.png");
+    // t0 = nowMs();
+    // goalnettingTex_ = loadAssetTexture("beta2/media/textures/stadium/goalnetting.png");
+    // t0 = nowMs();
     pitchOverlayTex_ = loadAssetTexture("beta2/media/textures/pitch/overlay.png");
     if (pitchOverlayTex_) {
         glBindTexture(GL_TEXTURE_2D, pitchOverlayTex_);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    LOGI("[initTiming] pitchOverlayTex: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     adboardTex_[0] = loadAssetTexture("beta2/media/textures/adboards/ad_your_ad_here.png");
     adboardTex_[1] = loadAssetTexture("beta2/media/textures/adboards/ad_polygon01.png");
     adboardTex_[2] = loadAssetTexture("beta2/media/textures/adboards/ad_stark01.png");
     adboardTex_[3] = loadAssetTexture("beta2/media/textures/adboards/ad_3xblast01.png");
-    LOGI("[initTiming] adboardTexs: %.1f ms", nowMs() - t0); t0 = nowMs();
-    LOGI("Textures: pitch=%u ball=%u stadium=%u crowd=%u goalnetting=%u pitchOverlay=%u",
-         pitchTex_, ballTex_, stadiumTex_, crowdTex_, goalnettingTex_, pitchOverlayTex_);
+    t0 = nowMs();
+    (void)pitchTex_; (void)ballTex_; (void)pitchOverlayTex_;
 
     // Load compiled directional animations from asset folder
     dirAnimBank_.load(gAssetManager, "directional_anims.bin");
-    LOGI("[initTiming] directional_anims.bin: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     glGenBuffers(1, &quadVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
@@ -2143,7 +1743,7 @@ void ARRenderer::init() {
     glGenBuffers(1, &uvVbo_);
     glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
     glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
-    LOGI("[initTiming] VBO setup: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // Build static scene graph
     int root = scene_.addNode("root", -1);
@@ -2162,7 +1762,7 @@ void ARRenderer::init() {
         pitchHalf_[0] = 11.0f * 0.5f;  // half length
         pitchHalf_[1] = 5.0f  * 0.5f;  // half width
     } else {
-        LOGI("Pitch half-extents (local bounding box meters): X=%.2f Z=%.2f", pitchHalf_[0], pitchHalf_[1]);
+        (void)pitchHalf_;
         // Override pitchHalf_ to exact true FIFA playfield markings (52.5m x 34.0m)
         // rather than using the raw GLB bounding box which includes external concrete borders.
         pitchHalf_[0] = 52.5f;
@@ -2175,10 +1775,9 @@ void ARRenderer::init() {
         constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX = pitchHalf_[0] * 0.1f;
         const float scaleZ = pitchHalf_[1] * 0.1f / kEnvYHalf;
-        LOGI("Player scales derived from true FIFA pitch: scaleX=%.3f scaleZ=%.3f",
-             scaleX, scaleZ);
+        (void)scaleX; (void)scaleZ;
     }
-    LOGI("[initTiming] pitch.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // 2. Goals
     int goalL = scene_.addNode("goalL", root);
@@ -2202,7 +1801,7 @@ void ARRenderer::init() {
         scene_.nodes[goalL].local.scale[1] = 0.1f;
         scene_.nodes[goalL].local.scale[2] = 0.1f;
     }
-    LOGI("[initTiming] goals.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // 3. Ball
     int ball = scene_.addNode("ball", root);
@@ -2217,7 +1816,7 @@ void ARRenderer::init() {
         scene_.nodes[ball].local.scale[1] = 0.15f;
         scene_.nodes[ball].local.scale[2] = 0.15f;
     }
-    LOGI("[initTiming] ball.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // 4. Stadium
     int stadium = scene_.addNode("stadium", root);
@@ -2225,19 +1824,19 @@ void ARRenderer::init() {
         LOGE("Could not load stadium_test.glb, falling back to invisible");
         scene_.nodes[stadium].visible = false;
     } else {
-        LOGI("Stadium loaded successfully from stadium_test.glb");
+        /* stadium loaded — DISABLED for performance, re-enable later */
         scene_.nodes[stadium].local.scale[0] = 0.1f;
         scene_.nodes[stadium].local.scale[1] = 0.1f;
         scene_.nodes[stadium].local.scale[2] = 0.1f;
-        scene_.nodes[stadium].visible = true;
+        scene_.nodes[stadium].visible = false;
     }
-    LOGI("[initTiming] stadium_test.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // 5. Player Base rigid rig (preload first rig as fallback)
     if (!playerRigs_[0].load("player_base.glb")) {
         LOGE("Could not load player_base.glb rig!");
     }
-    LOGI("[initTiming] player_base.glb: %.1f ms", nowMs() - t0); t0 = nowMs();
+    t0 = nowMs();
 
     // 6. Shadow map FBO
     // Use RGBA color texture for depth encoding (100% portable on mobile drivers)
@@ -2268,14 +1867,12 @@ void ARRenderer::init() {
     GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
         LOGE("Shadow FBO incomplete: 0x%x", fboStatus);
-    } else {
-        LOGI("Shadow map FBO created (%dx%d)", kShadowMapSize, kShadowMapSize);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    LOGI("[initTiming] shadow FBO: %.1f ms", nowMs() - t0);
+    (void)nowMs();
 
     scene_.update();
-    LOGI("[initTiming] scene_.update: %.1f ms", nowMs() - t0);
+    (void)nowMs();
 }
 
 void ARRenderer::destroy() {
@@ -2284,11 +1881,16 @@ void ARRenderer::destroy() {
     Shader::destroy(staticShader_);
     Shader::destroy(shadowShader_);
     Shader::destroy(uiShader_);
+    Shader::destroy(blitShader_);
     cameraShader_ = 0;
     skinnedShader_ = 0;
     staticShader_ = 0;
     shadowShader_ = 0;
     uiShader_ = 0;
+    blitShader_ = 0;
+    if (sceneFbo_) { glDeleteFramebuffers(1, &sceneFbo_); sceneFbo_ = 0; }
+    if (sceneColorTex_) { glDeleteTextures(1, &sceneColorTex_); sceneColorTex_ = 0; }
+    if (sceneDepthTex_) { glDeleteTextures(1, &sceneDepthTex_); sceneDepthTex_ = 0; }
     if (shadowFbo_) { glDeleteFramebuffers(1, &shadowFbo_); shadowFbo_ = 0; }
     if (shadowTex_) { glDeleteTextures(1, &shadowTex_); shadowTex_ = 0; }
     if (shadowColorTex_) { glDeleteTextures(1, &shadowColorTex_); shadowColorTex_ = 0; }
@@ -2342,11 +1944,7 @@ void ARRenderer::setMatchSetup(const dzfoot::MatchSetupPacket& setup) {
         uint8_t sb = (uint8_t)(c1[2] * 0.85f);
         teamShortTex_[t] = generateTeamKitTexture(sr, sg, sb, sr, sg, sb, 0);
     }
-    LOGI("Team kit textures generated: A=(%d,%d,%d)/(%d,%d,%d) B=(%d,%d,%d)/(%d,%d,%d)",
-         setup.teamAColor1[0], setup.teamAColor1[1], setup.teamAColor1[2],
-         setup.teamAColor2[0], setup.teamAColor2[1], setup.teamAColor2[2],
-         setup.teamBColor1[0], setup.teamBColor1[1], setup.teamBColor1[2],
-         setup.teamBColor2[0], setup.teamBColor2[1], setup.teamBColor2[2]);
+    (void)setup;
 }
 
 void ARRenderer::drawCameraBackground(ARManager& ar) {
@@ -2376,6 +1974,48 @@ void ARRenderer::drawCameraBackground(ARManager& ar) {
     glDepthMask(GL_TRUE);
 }
 
+void ARRenderer::resizeSceneFbo(int screenW, int screenH) {
+    if (screenW <= 0 || screenH <= 0) return;
+    int w = (int)(screenW * kRenderScale);
+    int h = (int)(screenH * kRenderScale);
+    if (w < 2) w = 2; if (h < 2) h = 2;
+    if (sceneRenderW_ == w && sceneRenderH_ == h) return;
+
+    if (sceneFbo_) { glDeleteFramebuffers(1, &sceneFbo_); sceneFbo_ = 0; }
+    if (sceneColorTex_) { glDeleteTextures(1, &sceneColorTex_); sceneColorTex_ = 0; }
+    if (sceneDepthTex_) { glDeleteTextures(1, &sceneDepthTex_); sceneDepthTex_ = 0; }
+
+    glGenFramebuffers(1, &sceneFbo_);
+    glGenTextures(1, &sceneColorTex_);
+    glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenTextures(1, &sceneDepthTex_);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColorTex_, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, sceneDepthTex_, 0);
+    GLenum drawBuf = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &drawBuf);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        LOGE("Scene FBO incomplete: 0x%x (%dx%d)", status, w, h);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    sceneRenderW_ = w;
+    sceneRenderH_ = h;
+}
+
 void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int numPlayers,
                                const float* ballPosition,
                                const float* boneMatrices, int numBones,
@@ -2397,19 +2037,6 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         mat4Identity(fallbackAnchor);
     }
     const float* anchorMat = fallbackAnchor;
-
-    // Log positions and tracking state once in a while to avoid spamming
-    static int frameCounter = 0;
-    if (frameCounter++ % 120 == 0) {
-        if (ballPosition && playerPositions) {
-            LOGI("[ARRenderer] Ball Pos: (%f, %f, %f), Player 0 Pos: (%f, %f, %f), Tracked: %d, NumBones: %d",
-                 ballPosition[0], ballPosition[1], ballPosition[2],
-                 playerPositions[0], playerPositions[1], playerPositions[2],
-                 tracked ? 1 : 0, numBones);
-        } else {
-            LOGI("[ARRenderer] Missing positions data! Ball: %p, Players: %p", ballPosition, playerPositions);
-        }
-    }
 
     float view[16], proj[16];
     ar.getViewMatrix(view);
@@ -2455,27 +2082,59 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     float eyeY = 42.5f * ratio;
     float eyeZ = 22.5f * ratio;
     mat4LookAt(lightView, eyeX, eyeY, eyeZ, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
-    
-    // Tight orthographic shadow box: cover just the pitch + minimal margin
-    // This concentrates all 4096 shadow-map pixels on the playable area
-    // for much higher per-pixel resolution on player silhouettes (~5x better)
     float extentX = pitchHalf_[0] * 1.05f;
     float extentZ = pitchHalf_[1] * 1.05f;
-    // Tight near/far planes improve depth precision (less shadow acne, visible foot shadows)
-    // Far must cover distance from light to farthest pitch corner (~99m at ratio=1)
-    // so the terrain is NOT clipped out of the shadow map.
     mat4Ortho(lightProj, -extentX, extentX, -extentZ, extentZ, 1.0f, 120.0f * ratio);
     mat4Mul(lightProj, lightView, lightSpaceMatrix_);
 
-    renderShadowMap(playerPositions, numPlayers, playerAnims, playerVels, playerRotY,
-                    playerFlags, playerTeams, playerRoles);
+    // SHADOW PASS DISABLED FOR MOBILE PERFORMANCE
+    // renderShadowMap(playerPositions, numPlayers, playerAnims, playerVels, playerRotY,
+    //                 playerFlags, playerTeams, playerRoles);
 
-    // ─── Main pass ──────────────────────────────────────────────
+    // ─── Render-to-texture (reduced resolution for mobile fill-rate) ─
+    resizeSceneFbo(screenW, screenH);
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo_);
+    glViewport(0, 0, sceneRenderW_, sceneRenderH_);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // 3D scene rendered at reduced resolution
     renderStaticObjects(vpa, lightSpaceMatrix_);
     renderPlayers(vpa, lightSpaceMatrix_, playerPositions, numPlayers,
                   playerAnims, playerVels, playerRotY, playerFlags, playerTeams, playerRoles);
 
-    // ─── UI overlay ───────────────────────────────────────────────
+    // Restore default framebuffer and native viewport
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(0, 0, screenW, screenH);
+
+    // Blit scene texture over background (camera AR already drawn by caller)
+    glDisable(GL_BLEND); // scene texture has alpha=0 from clear; blending would discard it
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+
+    Shader::use(blitShader_);
+    if (blitTexLoc_ >= 0) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
+        glUniform1i(blitTexLoc_, 0);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, quadVbo_);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, uvVbo_);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glEnableVertexAttribArray(1);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+
+    // ─── UI overlay (native resolution) ───────────────────────────
     if (ctrl && screenW > 0 && screenH > 0) {
         renderUI(*ctrl, screenW, screenH, vpa, playerPositions, playerFlags, playerTeams);
     }
@@ -2486,52 +2145,27 @@ void ARRenderer::renderStaticObjects(const float* viewProj, const float* lightSp
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     Shader::use(staticShader_);
-    GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
-    GLint modelLoc = glGetUniformLocation(staticShader_, "u_ModelMatrix");
-    GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-    GLint matLoc = glGetUniformLocation(staticShader_, "u_MaterialType");
-    GLint pitchHalfLoc = glGetUniformLocation(staticShader_, "u_PitchHalf");
-    GLint useTexLoc = glGetUniformLocation(staticShader_, "u_UseTexture");
-    GLint texLoc = glGetUniformLocation(staticShader_, "u_BaseTexture");
-    GLint useOverlayLoc = glGetUniformLocation(staticShader_, "u_UseOverlay");
-    GLint overlayTexLoc = glGetUniformLocation(staticShader_, "u_OverlayTexture");
-    GLint timeLoc = glGetUniformLocation(staticShader_, "u_Time");
-    GLint lightSpaceLoc = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
-    GLint shadowMapLoc = glGetUniformLocation(staticShader_, "u_ShadowMap");
-    GLint fogDensityLoc = glGetUniformLocation(staticShader_, "u_FogDensity");
+    // Use cached uniform locations (queried once at init)
+    GLint mvpLoc         = staticMvpLoc_;
+    GLint modelLoc       = staticModelLoc_;
+    GLint colLoc         = staticColLoc_;
+    GLint matLoc         = staticMatLoc_;
+    GLint pitchHalfLoc   = staticPitchHalfLoc_;
+    GLint useTexLoc      = staticUseTexLoc_;
+    GLint texLoc         = staticTexLoc_;
+    GLint useOverlayLoc  = staticUseOverlayLoc_;
+    GLint overlayTexLoc  = staticOverlayTexLoc_;
+    GLint timeLoc        = staticTimeLoc_;
+    GLint lightSpaceLoc  = staticLightSpaceLoc_;
+    GLint shadowMapLoc   = staticShadowMapLoc_;
+    GLint fogDensityLoc  = staticFogDensityLoc_;
 
     glUniform2f(pitchHalfLoc, pitchHalf_[0], pitchHalf_[1]);
     glUniform1f(useTexLoc, 0.0f);
     glUniform1f(useOverlayLoc, 0.0f);
-    if (timeLoc >= 0) {
-        glUniform1f(timeLoc, static_cast<float>(nowMs() * 0.001));
-    }
-    if (lightSpaceLoc >= 0) {
-        glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
-    }
-    if (fogDensityLoc >= 0) {
-        glUniform1f(fogDensityLoc, 0.025f);
-    }
-    if (shadowMapLoc >= 0) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, shadowColorTex_);
-        glUniform1i(shadowMapLoc, 1);
-    }
-
-    // Set adboard textures for stadium LED panels
-    GLint adboardLocs[4];
-    adboardLocs[0] = glGetUniformLocation(staticShader_, "u_AdboardTex0");
-    adboardLocs[1] = glGetUniformLocation(staticShader_, "u_AdboardTex1");
-    adboardLocs[2] = glGetUniformLocation(staticShader_, "u_AdboardTex2");
-    adboardLocs[3] = glGetUniformLocation(staticShader_, "u_AdboardTex3");
-    for (int i = 0; i < 4; ++i) {
-        if (adboardLocs[i] >= 0) {
-            glActiveTexture(GL_TEXTURE2 + i);
-            // Fall back to stadiumTex_ or pitchTex_ if not loaded
-            glBindTexture(GL_TEXTURE_2D, adboardTex_[i] ? adboardTex_[i] : (stadiumTex_ ? stadiumTex_ : pitchTex_));
-            glUniform1i(adboardLocs[i], 2 + i);
-        }
-    }
+    // Shadow / adboard / time uniforms removed — shader is now mobile-fast path
+    (void)timeLoc; (void)lightSpaceLoc; (void)shadowMapLoc; (void)fogDensityLoc;
+    (void)staticAdboardLocs_;
 
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
@@ -2614,20 +2248,16 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     }
     if (!anyRigLoaded) {
         // fallback: draw tiny cubes if no rig loaded
-        static int fallbackCounter = 0;
-        bool shouldLog = (fallbackCounter++ % 120 == 0);
-        if (shouldLog) LOGI("[ARRenderer::renderPlayers] No PlayerRig loaded, using cube fallback");
-
         Shader::use(staticShader_);
-        GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
-        GLint modelLoc = glGetUniformLocation(staticShader_, "u_ModelMatrix");
-        GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-        GLint lightSpaceLoc = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
-        GLint shadowMapLoc = glGetUniformLocation(staticShader_, "u_ShadowMap");
-        GLint fogDensityLoc = glGetUniformLocation(staticShader_, "u_FogDensity");
+        GLint mvpLoc         = staticMvpLoc_;
+        GLint modelLoc       = staticModelLoc_;
+        GLint colLoc         = staticColLoc_;
+        GLint lightSpaceLoc  = staticLightSpaceLoc_;
+        GLint shadowMapLoc   = staticShadowMapLoc_;
+        GLint fogDensityLoc  = staticFogDensityLoc_;
         if (lightSpaceLoc >= 0) glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
         if (fogDensityLoc >= 0) glUniform1f(fogDensityLoc, 0.025f);
-        if (shadowMapLoc >= 0) {
+        if (shadowMapLoc >= 0 && shadowColorTex_) {
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, shadowColorTex_);
             glUniform1i(shadowMapLoc, 1);
@@ -2660,33 +2290,23 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     }
 
     Shader::use(staticShader_);
-    GLint mvpLoc = glGetUniformLocation(staticShader_, "u_ModelViewProj");
-    GLint modelLoc = glGetUniformLocation(staticShader_, "u_ModelMatrix");
-    GLint colLoc = glGetUniformLocation(staticShader_, "u_Color");
-    GLint matLoc = glGetUniformLocation(staticShader_, "u_MaterialType");
-    GLint useTexLoc = glGetUniformLocation(staticShader_, "u_UseTexture");
-    GLint lightSpaceLoc = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
-    GLint shadowMapLoc = glGetUniformLocation(staticShader_, "u_ShadowMap");
-    GLint fogDensityLoc = glGetUniformLocation(staticShader_, "u_FogDensity");
-    GLint blobShadowLoc = glGetUniformLocation(staticShader_, "u_BlobShadow");
-    if (blobShadowLoc >= 0) glUniform1f(blobShadowLoc, 0.0f);
+    GLint mvpLoc         = staticMvpLoc_;
+    GLint modelLoc       = staticModelLoc_;
+    GLint colLoc         = staticColLoc_;
+    GLint matLoc         = staticMatLoc_;
+    GLint useTexLoc      = staticUseTexLoc_;
+    GLint lightSpaceLoc  = staticLightSpaceLoc_;
+    GLint shadowMapLoc   = staticShadowMapLoc_;
+    GLint fogDensityLoc  = staticFogDensityLoc_;
+    // u_BlobShadow removed — not present in current shader, glGetUniformLocation per frame is expensive
     glUniform1i(matLoc, 0); // force default color mode so ballPattern is NOT used
     glUniform1f(useTexLoc, 0.0f);
-    if (lightSpaceLoc >= 0) glUniformMatrix4fv(lightSpaceLoc, 1, GL_FALSE, lightSpaceMatrix);
-    if (fogDensityLoc >= 0) glUniform1f(fogDensityLoc, 0.025f);
-    if (shadowMapLoc >= 0) {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, shadowTex_);
-        glUniform1i(shadowMapLoc, 1);
-    }
+    // Shadow/lightSpace removed — shader fast path, shadow pass disabled
+    (void)lightSpaceLoc; (void)fogDensityLoc; (void)shadowMapLoc;
 
     static int playerFrameCounter = 0;
     bool shouldLog = (playerFrameCounter++ % 120 == 0);
-    if (shouldLog) {
-        size_t totalNodes = 0;
-        for (int r = 0; r < 25; ++r) totalNodes += playerRigs_[r].nodes.size();
-        LOGI("[renderPlayers] Total rig nodes=%zu, numPlayers=%d", totalNodes, numPlayers);
-    }
+    (void)shouldLog;
 
     // GF env_coord ranges: X in [-1,1] (length), Y in [-0.43,0.43] (width)
     // Map to 3D scene units derived from the ACTUAL pitch GLB.
@@ -2827,9 +2447,6 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         if (needsLoad && loadCooldown[i] <= 0) {
             if (!playerRigs_[i].loadModular(cfg)) {
                 loadCooldown[i] = 300; // ~5s retry backoff
-                if (!playerRigs_[0].nodes.empty()) {
-                    LOGI("[renderPlayers] Player %d modular load failed, will use fallback", i);
-                }
             } else {
                 playerRigs_[i].loadedCfg_ = cfg;
                 playerRigs_[i].hasLoadedCfg_ = true;
@@ -2854,10 +2471,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                   lightSpaceMatrix_, shadowColorTex_,
                   pitchHalf_[0] / 52.5f);
 
-        if (shouldLog && i == 0) {
-            LOGI("[renderPlayers] P%d num=%d drawn at (%.2f,%.2f,%.2f) rotY=%.2f kitTex=%u", i,
-                 (int)cfg.playerNumber, worldPos[0], worldPos[1], worldPos[2], rotY, playerKitTex);
-        }
+        (void)cfg; (void)playerKitTex;
     }
 }
 
@@ -2884,7 +2498,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
     glClearColor(prevClearColor[0], prevClearColor[1], prevClearColor[2], prevClearColor[3]);
 
     Shader::use(shadowShader_);
-    GLint mvpLoc = glGetUniformLocation(shadowShader_, "u_ModelViewProj");
+    GLint mvpLoc = shadowMvpLoc_;
 
     // Render static objects into shadow map (cull back faces: terrain face-up gets drawn)
     glEnable(GL_CULL_FACE);
@@ -2963,8 +2577,8 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
     };
 
     Shader::use(uiShader_);
-    GLint orthoLoc = glGetUniformLocation(uiShader_, "u_Ortho");
-    GLint colorLoc = glGetUniformLocation(uiShader_, "u_Color");
+    GLint orthoLoc = uiOrthoLoc_;
+    GLint colorLoc = uiColorLoc_;
     glUniformMatrix4fv(orthoLoc, 1, GL_FALSE, ortho);
     glBindBuffer(GL_ARRAY_BUFFER, uiVbo_);
     glEnableVertexAttribArray(0);
