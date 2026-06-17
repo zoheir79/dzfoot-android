@@ -62,6 +62,10 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
             setRenderer(this@MainActivity)
+            setOnTouchListener { _, event ->
+                onTouchEvent(event)
+                true
+            }
         }
 
         audioSystem.init()
@@ -541,9 +545,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private var lastSendInputMs = 0L
     private val soundsLock = Object()
     private var soundsLoaded = false
-    private fun sendInput() {
+    private fun sendInput(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - lastSendInputMs < 50) return // throttle to ~20 Hz max
+        if (!force && now - lastSendInputMs < 50) return // throttle continuous sends to ~20 Hz
         lastSendInputMs = now
         if (::lkManager.isInitialized) {
             val inputBytes = jni.nativeGetInputBytes()
@@ -559,7 +563,10 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     val buttons = buf.getShort(20).toInt() and 0xFFFF
                     val playerIdx = buf.get(22).toInt() and 0xFF
                     val team = buf.get(23).toInt() and 0xFF
-                    if (sendInputLogCount++ % 10 == 0) {
+                    val hasInput = (buttons != 0) || (Math.abs(dirX) > 0.01f) || (Math.abs(dirZ) > 0.01f)
+                    if (hasInput) {
+                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
+                    } else if (sendInputLogCount++ % 10 == 0) {
                         Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
                     }
                 }
@@ -576,7 +583,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val x = event.getX(pointerIdx)
         val y = event.getY(pointerIdx)
         jni.nativeOnTouch(x, y, action, pointerId)
-        sendInput()
+        sendInput(force = true)
         return true
     }
 

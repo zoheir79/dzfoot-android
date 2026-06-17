@@ -81,7 +81,7 @@ class LiveKitManager(private val activity: MainActivity) {
                 @Suppress("CheckResult")
                 r.localParticipant.publishData(
                     data = inputBytes,
-                    reliability = DataPublishReliability.LOSSY,
+                    reliability = DataPublishReliability.RELIABLE,
                     topic = "in",
                 )
                 android.util.Log.i("gamestates", "LK_SEND topic=in size=${inputBytes.size}")
