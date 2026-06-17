@@ -21,13 +21,13 @@ class LiveKitManager(private val activity: MainActivity) {
             room!!.events.collect { event ->
                 when (event) {
                     is RoomEvent.Connected -> {
-                        android.util.Log.i("gamestates", "LK Connected")
+                        android.util.Log.i("DZ_LK", "LK Connected")
                     }
                     is RoomEvent.Disconnected -> {
-                        android.util.Log.i("gamestates", "LK Disconnected")
+                        android.util.Log.i("DZ_LK", "LK Disconnected")
                     }
                     is RoomEvent.DataReceived -> {
-                        android.util.Log.i("gamestates", "LK_RECV topic=${event.topic} size=${event.data.size}")
+                        android.util.Log.i("DZ_LK", "LK_RECV topic=${event.topic} size=${event.data.size}")
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
                             "setup" -> activity.jni.nativeOnMatchSetup(event.data)
@@ -49,7 +49,7 @@ class LiveKitManager(private val activity: MainActivity) {
                         }
                     }
                     is RoomEvent.FailedToConnect -> {
-                        android.util.Log.e("gamestates", "LK FailedToConnect: ${event.error.message}")
+                        android.util.Log.e("DZ_LK", "LK FailedToConnect: ${event.error.message}")
                     }
                     else -> {} // ignore other events
                 }
@@ -59,9 +59,9 @@ class LiveKitManager(private val activity: MainActivity) {
         scope.launch {
             try {
                 room!!.connect(wsUrl, token)
-                android.util.Log.i("gamestates", "LK connect call completed")
+                android.util.Log.i("DZ_LK", "LK connect call completed")
             } catch (e: Exception) {
-                android.util.Log.e("gamestates", "LK Failed to connect: ${e.message}")
+                android.util.Log.e("DZ_LK", "LK Failed to connect: ${e.message}")
             }
         }
     }
@@ -69,11 +69,11 @@ class LiveKitManager(private val activity: MainActivity) {
     fun sendInput(inputBytes: ByteArray) {
         val r = room
         if (r == null) {
-            android.util.Log.w("gamestates", "LK_SEND room=null")
+            android.util.Log.w("DZ_NET", "LK_SEND room=null")
             return
         }
         if (r.state != Room.State.CONNECTED) {
-            android.util.Log.w("gamestates", "LK_SEND not connected, state=${r.state}")
+            android.util.Log.w("DZ_NET", "LK_SEND not connected, state=${r.state}")
             return
         }
         scope.launch {
@@ -84,9 +84,9 @@ class LiveKitManager(private val activity: MainActivity) {
                     reliability = DataPublishReliability.RELIABLE,
                     topic = "in",
                 )
-                android.util.Log.i("gamestates", "LK_SEND topic=in size=${inputBytes.size}")
+                android.util.Log.i("DZ_NET", "LK_SEND topic=in size=${inputBytes.size}")
             } catch (e: Exception) {
-                android.util.Log.w("gamestates", "LK_SEND publishData failed: ${e.message}")
+                android.util.Log.w("DZ_NET", "LK_SEND publishData failed: ${e.message}")
             }
         }
     }

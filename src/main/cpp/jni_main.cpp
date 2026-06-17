@@ -359,6 +359,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeOnTouch(
     JNIEnv* env, jobject thiz, jfloat x, jfloat y, jint action, jint pointerId) {
+    LOGI("[DZ_JNI] nativeOnTouch action=%d x=%.1f y=%.1f pid=%d", action, x, y, pointerId);
     if (action == 0 || action == 5) { // ACTION_DOWN or ACTION_POINTER_DOWN
         gTouchController.onTouchDown(pointerId, x, y);
     } else if (action == 2) { // ACTION_MOVE
@@ -376,11 +377,10 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     uint8_t buf[pktSize];
     gTouchController.serialize(buf, pktSize);
     const dzfoot::PlayerInputPacket* pkt = reinterpret_cast<const dzfoot::PlayerInputPacket*>(buf);
-    static int inputLogCounter = 0;
-    if ((inputLogCounter++ % 10) == 0) {
-        LOGI("[gamestates] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X magic=0x%08X",
-             pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons,
-             pkt->header.magic);
+    bool hasInput = (pkt->buttons != 0) || (std::fabs(pkt->dirX) > 0.01f) || (std::fabs(pkt->dirZ) > 0.01f);
+    if (hasInput) {
+        LOGI("[DZ_JNI] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X",
+             pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons);
     }
     jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);

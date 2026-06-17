@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             setEGLContextClientVersion(3)
             setRenderer(this@MainActivity)
             setOnTouchListener { _, event ->
-                onTouchEvent(event)
+                this@MainActivity.onTouchEvent(event)
                 true
             }
         }
@@ -565,9 +565,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     val team = buf.get(23).toInt() and 0xFF
                     val hasInput = (buttons != 0) || (Math.abs(dirX) > 0.01f) || (Math.abs(dirZ) > 0.01f)
                     if (hasInput) {
-                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
+                        Log.i("DZ_INPUT", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
                     } else if (sendInputLogCount++ % 10 == 0) {
-                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
+                        Log.i("DZ_INPUT", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
                     }
                 }
                 lkManager.sendInput(inputBytes)
@@ -582,6 +582,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val pointerId = event.getPointerId(pointerIdx)
         val x = event.getX(pointerIdx)
         val y = event.getY(pointerIdx)
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
+            Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
+        }
         jni.nativeOnTouch(x, y, action, pointerId)
         sendInput(force = true)
         return true
@@ -592,7 +595,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             latestGameState = data.copyOf()
         }
         if (data.size < 1256) {
-            Log.w("gamestates", "ANDROID_IN GameState incomplete: ${data.size} bytes (expected 1256)")
+            Log.w("DZ_STATE", "ANDROID_IN GameState incomplete: ${data.size} bytes (expected 1256)")
             return
         }
         // Parse binary GameStatePacket (offset 12=tick, 32=ball pos, 26=score, 28=timer)
@@ -621,7 +624,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val camRot2 = bb.getFloat(1244)
         val camRot3 = bb.getFloat(1248)
         val camFov = bb.getFloat(1252)
-        Log.i("gamestates", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        Log.i("DZ_STATE", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
             timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
