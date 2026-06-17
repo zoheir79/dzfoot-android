@@ -5,6 +5,9 @@
 #include <GLES3/gl3.h>
 #include <vector>
 #include <cmath>
+#include <EGL/egl.h>
+#include <bgfx/bgfx.h>
+#include <bgfx/platform.h>
 
 #include "ARManager.h"
 #include "ARRenderer.h"
@@ -123,6 +126,7 @@ Java_com_football_ar_JniBridge_nativeDestroy(JNIEnv* env, jobject thiz) {
     gRenderer.destroy();
     gRendererInited = false;
     gArManager.destroy();
+    bgfx::shutdown();
     LOGI("Native destroy OK");
 }
 
@@ -139,9 +143,23 @@ Java_com_football_ar_JniBridge_nativePause(JNIEnv* env, jobject thiz) {
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     gArManager.onSurfaceCreated();
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glDisable(GL_CULL_FACE);  // Disabled: simpler debug, can enable once winding verified
+    
+    EGLContext context = eglGetCurrentContext();
+    if (context == EGL_NO_CONTEXT) {
+        LOGE("No active EGL context! Skipping bgfx initialization.");
+        return;
+    }
+    
+    static bool bgfxInited = false;
+    if (bgfxInited) {
+        bgfx::shutdown();
+        bgfxInited = false;
+    }
+    bgfx::Init bgfxInit;
+    bgfxInit.type = bgfx::RendererType::OpenGLES;
+    bgfxInit.platformData.context = context;
+    bgfx::init(bgfxInit);
+    bgfxInited = true;
     
     if (gRendererInited) {
         gRenderer.destroy();
@@ -158,7 +176,7 @@ Java_com_football_ar_JniBridge_nativeDisplayChanged(
     gArManager.onDisplayGeometryChanged(rotation, width, height);
     gScreenW = width; gScreenH = height;
     gTouchController.setScreenSize(width, height);
-    glViewport(0, 0, width, height);
+    bgfx::reset(width, height, BGFX_RESET_VSYNC);
     LOGI("Viewport set: %dx%d rotation=%d", width, height, rotation);
 }
 
@@ -354,6 +372,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
                           nullptr, 0, playerAnims, playerVels, playerRotY,
                           playerFlags, playerTeams, playerRoles,
                           &gTouchController, gScreenW, gScreenH);
+    bgfx::frame();
 }
 
 JNIEXPORT void JNICALL

@@ -1,4 +1,6 @@
 #include "Shader.h"
+#include <vector>
+#include <cstring>
 #include <android/log.h>
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "Shader", __VA_ARGS__)
@@ -67,6 +69,49 @@ void Shader::setVec3(GLuint program, const char* name, float x, float y, float z
 void Shader::destroy(GLuint program) {
     if (program > 0) {
         glDeleteProgram(program);
+    }
+}
+
+static bgfx::ShaderHandle createShaderFromString(const char* src, bool isFragment) {
+    uint32_t srcLen = static_cast<uint32_t>(std::strlen(src));
+    std::vector<uint8_t> mem;
+    mem.push_back('S');
+    mem.push_back('H');
+    mem.push_back('D');
+    mem.push_back(11); // standard bgfx shader version for GLES (11 on master branch)
+    
+    uint32_t hash = 0;
+    mem.insert(mem.end(), reinterpret_cast<uint8_t*>(&hash), reinterpret_cast<uint8_t*>(&hash) + 4);
+    
+    uint16_t uniformCount = 0;
+    mem.insert(mem.end(), reinterpret_cast<uint8_t*>(&uniformCount), reinterpret_cast<uint8_t*>(&uniformCount) + 2);
+    
+    mem.insert(mem.end(), reinterpret_cast<uint8_t*>(&srcLen), reinterpret_cast<uint8_t*>(&srcLen) + 4);
+    mem.insert(mem.end(), src, src + srcLen);
+    mem.push_back(0);
+    
+    const bgfx::Memory* bgfxMem = bgfx::copy(mem.data(), static_cast<uint32_t>(mem.size()));
+    return bgfx::createShader(bgfxMem);
+}
+
+bgfx::ProgramHandle Shader::compileBgfx(const char* vertSrc, const char* fragSrc) {
+    bgfx::ShaderHandle vsh = createShaderFromString(vertSrc, false);
+    bgfx::ShaderHandle fsh = createShaderFromString(fragSrc, true);
+    if (!bgfx::isValid(vsh) || !bgfx::isValid(fsh)) {
+        LOGE("Failed to create bgfx vertex or fragment shader!");
+        union { bgfx_program_handle_t c; bgfx::ProgramHandle cpp; } invalid = { BGFX_INVALID_HANDLE };
+        return invalid.cpp;
+    }
+    bgfx::ProgramHandle prog = bgfx::createProgram(vsh, fsh, true);
+    if (!bgfx::isValid(prog)) {
+        LOGE("Failed to link bgfx program!");
+    }
+    return prog;
+}
+
+void Shader::destroyBgfx(bgfx::ProgramHandle program) {
+    if (bgfx::isValid(program)) {
+        bgfx::destroy(program);
     }
 }
  

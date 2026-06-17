@@ -45,7 +45,7 @@ void Camera::lookAt(float ex, float ey, float ez,
     view_[8] = sz;   view_[9] = uz2;  view_[10]= -fz;  view_[11]= 0;
     view_[12]= -(sx*ex + sy*ey + sz*ez);
     view_[13]= -(ux2*ex + uy2*ey + uz2*ez);
-    view_[14]= -(fx*ex + fy*ey + fz*ez);
+    view_[14]= fx*ex + fy*ey + fz*ez;
     view_[15]= 1;
 }
 

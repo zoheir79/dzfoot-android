@@ -1,5 +1,6 @@
 #pragma once
 #include <GLES3/gl3.h>
+#include <bgfx/bgfx.h>
 #include <string>
 
 class Shader {
@@ -10,4 +11,7 @@ public:
     static void setInt(GLuint program, const char* name, int val);
     static void setVec3(GLuint program, const char* name, float x, float y, float z);
     static void destroy(GLuint program);
+
+    static bgfx::ProgramHandle compileBgfx(const char* vertSrc, const char* fragSrc);
+    static void destroyBgfx(bgfx::ProgramHandle program);
 };

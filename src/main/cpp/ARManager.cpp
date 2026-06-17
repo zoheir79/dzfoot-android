@@ -201,7 +201,7 @@ static void lookAt(float* m, float eyeX, float eyeY, float eyeZ,
     // Column-major order for OpenGL
     m[0]=s[0];  m[4]=s[1];  m[8]=s[2];  m[12]=-(s[0]*eyeX+s[1]*eyeY+s[2]*eyeZ);
     m[1]=u[0];  m[5]=u[1];  m[9]=u[2];  m[13]=-(u[0]*eyeX+u[1]*eyeY+u[2]*eyeZ);
-    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2];m[14]=-(f[0]*eyeX+f[1]*eyeY+f[2]*eyeZ);
+    m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2];m[14]=f[0]*eyeX+f[1]*eyeY+f[2]*eyeZ;
     m[3]=0;     m[7]=0;     m[11]=0;     m[15]=1;
 }
 
