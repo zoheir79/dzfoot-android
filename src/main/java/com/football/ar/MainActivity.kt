@@ -549,18 +549,18 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             val inputBytes = jni.nativeGetInputBytes()
             if (inputBytes.isNotEmpty()) {
                 // Parse PlayerInputPacket (36 bytes) to log real values
-                if (inputBytes.size >= 20) {
+                if (inputBytes.size >= 28) {
                     val buf = java.nio.ByteBuffer.wrap(inputBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                    val magic = buf.getShort(0).toInt() and 0xFFFF
-                    val version = buf.get(2).toInt() and 0xFF
-                    val type = buf.get(3).toInt() and 0xFF
-                    val team = buf.get(8).toInt() and 0xFF
-                    val playerIdx = buf.get(9).toInt() and 0xFF
-                    val dirX = buf.getFloat(10)
-                    val dirZ = buf.getFloat(14)
-                    val buttons = buf.getShort(16).toInt() and 0xFFFF
+                    val magic = buf.getInt(0)
+                    val version = buf.getShort(4).toInt() and 0xFFFF
+                    val type = buf.getShort(6).toInt() and 0xFFFF
+                    val dirX = buf.getFloat(12)
+                    val dirZ = buf.getFloat(16)
+                    val buttons = buf.getShort(20).toInt() and 0xFFFF
+                    val playerIdx = buf.get(22).toInt() and 0xFF
+                    val team = buf.get(23).toInt() and 0xFF
                     if (sendInputLogCount++ % 10 == 0) {
-                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%04X ver=$version".format(buttons, magic))
+                        Log.i("gamestates", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
                     }
                 }
                 lkManager.sendInput(inputBytes)

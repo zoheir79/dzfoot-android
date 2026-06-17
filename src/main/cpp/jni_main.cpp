@@ -378,7 +378,7 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     const dzfoot::PlayerInputPacket* pkt = reinterpret_cast<const dzfoot::PlayerInputPacket*>(buf);
     static int inputLogCounter = 0;
     if ((inputLogCounter++ % 10) == 0) {
-        LOGI("[gamestates] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X magic=0x%04X",
+        LOGI("[gamestates] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X magic=0x%08X",
              pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons,
              pkt->header.magic);
     }
