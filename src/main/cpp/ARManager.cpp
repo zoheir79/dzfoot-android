@@ -219,11 +219,12 @@ void ARManager::getViewMatrix(float* out) const {
         Transform::quatToMat4(serverCamRot_, rot);
         // GF uses Z-up (X=length, Y=width, Z=height).
         // OpenGL uses Y-up (X=length, Y=height, Z=width).
-        // Convert rotation: swap Y and Z axes in the matrix.
+        // Convert rotation: swap Y↔Z AND flip X to preserve right-handedness
+        // (det=+1), otherwise the camera yaws 180° towards the wrong end.
         float rotOgl[16];
-        rotOgl[0] = rot[0];   rotOgl[4] = rot[8];   rotOgl[8]  = rot[4];
-        rotOgl[1] = rot[2];   rotOgl[5] = rot[10];  rotOgl[9]  = rot[6];
-        rotOgl[2] = rot[1];   rotOgl[6] = rot[9];   rotOgl[10] = rot[5];
+        rotOgl[0] = -rot[0];  rotOgl[4] = -rot[8];  rotOgl[8]  = -rot[4];
+        rotOgl[1] = -rot[2];  rotOgl[5] = -rot[10]; rotOgl[9]  = -rot[6];
+        rotOgl[2] =  rot[1];  rotOgl[6] =  rot[9];  rotOgl[10] =  rot[5];
         // View matrix = transpose (inverse of orthonormal rotation)
         out[0] = rotOgl[0];   out[4] = rotOgl[1];   out[8]  = rotOgl[2];   out[12] = -(rotOgl[0]*serverCamX_ + rotOgl[1]*serverCamY_ + rotOgl[2]*serverCamZ_);
         out[1] = rotOgl[4];   out[5] = rotOgl[5];   out[9]  = rotOgl[6];   out[13] = -(rotOgl[4]*serverCamX_ + rotOgl[5]*serverCamY_ + rotOgl[6]*serverCamZ_);
