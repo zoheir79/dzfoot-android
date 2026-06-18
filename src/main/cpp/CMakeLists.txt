@@ -62,6 +62,9 @@ FetchContent_MakeAvailable(bgfx_cmake)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 include_directories(${ARCORE_INCLUDE})
+include_directories(${bx_SOURCE_DIR}/include)
+include_directories(${bimg_SOURCE_DIR}/include)
+include_directories(${bgfx_SOURCE_DIR}/include)
 
 add_library(football_ar SHARED
     jni_main.cpp

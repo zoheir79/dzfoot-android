@@ -1,6 +1,7 @@
 #include "TouchController.h"
 #include <algorithm>
 #include <chrono>
+#include <android/log.h>
 
 static double nowMs() {
     auto t = std::chrono::steady_clock::now();
@@ -10,6 +11,7 @@ static double nowMs() {
 void TouchController::setScreenSize(int width, int height) {
     screenW_ = width;
     screenH_ = height;
+    __android_log_print(ANDROID_LOG_INFO, "DZFootJNI", "[DZ_JNI] setScreenSize %dx%d", width, height);
     // Joystick zone: bottom-left, 200px from edges, 140px radius
     joyCx_ = 200.0f;
     joyCy_ = height - 200.0f;
@@ -34,6 +36,10 @@ void TouchController::onTouchDown(int pointerId, float x, float y) {
     if (pointerId < 0 || pointerId >= MAX_POINTERS) return;
     pointers_[pointerId] = { true, x, y };
 
+    __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
+        "[DZ_JNI] onTouchDown pid=%d x=%.1f y=%.1f joy=(%.1f,%.1f,r=%.1f)",
+        pointerId, x, y, joyCx_, joyCy_, joyRadius_);
+
     // Check joystick zone first (left half, bottom area)
     float djoy = std::sqrt((x - joyCx_)*(x - joyCx_) + (y - joyCy_)*(y - joyCy_));
     if (djoy < joyRadius_ * 1.5f && joyPointer_ < 0) {
@@ -44,13 +50,19 @@ void TouchController::onTouchDown(int pointerId, float x, float y) {
     // Check action buttons
     for (int i = 0; i < numButtons_; ++i) {
         float d = std::sqrt((x - buttons_[i].cx)*(x - buttons_[i].cx) + (y - buttons_[i].cy)*(y - buttons_[i].cy));
-        if (d < buttons_[i].radius && buttons_[i].pointerId < 0) {
+        bool hit = d < buttons_[i].radius && buttons_[i].pointerId < 0;
+        __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
+            "[DZ_JNI] btn check %s cx=%.1f cy=%.1f r=%.1f d=%.1f hit=%d pressed=%d",
+            buttons_[i].label, buttons_[i].cx, buttons_[i].cy, buttons_[i].radius, d, hit ? 1 : 0, buttons_[i].pressed ? 1 : 0);
+        if (hit) {
             buttons_[i].pressed = true;
             buttons_[i].pointerId = pointerId;
             buttons_[i].pressTimeMs = nowMs();
             input_.buttons |= buttons_[i].buttonMask;
         }
     }
+    __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
+        "[DZ_JNI] onTouchDown result buttons=0x%04X", input_.buttons);
     updateButtonStates();
 }
 

@@ -99,8 +99,8 @@ bgfx::ProgramHandle Shader::compileBgfx(const char* vertSrc, const char* fragSrc
     bgfx::ShaderHandle fsh = createShaderFromString(fragSrc, true);
     if (!bgfx::isValid(vsh) || !bgfx::isValid(fsh)) {
         LOGE("Failed to create bgfx vertex or fragment shader!");
-        union { bgfx_program_handle_t c; bgfx::ProgramHandle cpp; } invalid = { BGFX_INVALID_HANDLE };
-        return invalid.cpp;
+        bgfx::ProgramHandle invalid = BGFX_INVALID_HANDLE;
+        return invalid;
     }
     bgfx::ProgramHandle prog = bgfx::createProgram(vsh, fsh, true);
     if (!bgfx::isValid(prog)) {

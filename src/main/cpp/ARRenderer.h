@@ -150,7 +150,7 @@ public:
 
     // Scene half-extents in metres (used by broadcast camera for proportional positioning)
     float getSceneHalfX() const { return pitchHalf_[0] * 0.1f; }
-    float getSceneHalfZ() const { return pitchHalf_[1] * 0.1f; }
+    float getSceneHalfZ() const { return pitchHalf_[1] * 0.1f / 0.4306f; } // must match getPitchScaleZ()
 
 private:
     GLuint cameraShader_  = 0;
@@ -213,8 +213,8 @@ private:
     static constexpr int kShadowMapSize = 512; // reduced from 2048 to save GPU fill
     float lightSpaceMatrix_[16];
 
-    // Off-screen render target: render 3D scene at reduced resolution, then blit to screen
-    static constexpr float kRenderScale = 0.75f;
+    // Off-screen render target: render 3D scene at native resolution for crisp output
+    static constexpr float kRenderScale = 1.0f;
     GLuint blitShader_ = 0;
     GLuint sceneFbo_ = 0;
     GLuint sceneColorTex_ = 0;

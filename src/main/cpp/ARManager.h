@@ -52,12 +52,21 @@ public:
         sceneHalfZ_ = halfZ;
     }
 
-    void setServerCamera(float x, float y, float z, float fov) {
+    void setServerCamera(float x, float y, float z, float fov, const float* rot = nullptr) {
         hasServerCamera_ = true;
         serverCamX_ = x;
         serverCamY_ = y;
         serverCamZ_ = z;
         serverCamFov_ = fov;
+        if (rot) {
+            serverCamRot_[0] = rot[0];
+            serverCamRot_[1] = rot[1];
+            serverCamRot_[2] = rot[2];
+            serverCamRot_[3] = rot[3];
+            hasServerCameraRot_ = true;
+        } else {
+            hasServerCameraRot_ = false;
+        }
     }
     void clearServerCamera() {
         hasServerCamera_ = false;
@@ -100,10 +109,12 @@ private:
     CameraMode camMode_ = CameraMode::Classic;
 
     bool  hasServerCamera_ = false;
+    bool  hasServerCameraRot_ = false;
     float serverCamX_      = 0.0f;
     float serverCamY_      = 0.0f;
     float serverCamZ_      = 0.0f;
     float serverCamFov_     = 38.0f;
+    float serverCamRot_[4]  = {0,0,0,1};
 
     // Actual scene pitch half-extents (in metres), set from renderer so the
     // broadcast camera clamps and positions itself proportionally.

@@ -1,4 +1,5 @@
 #include "ARManager.h"
+#include "SceneGraph.h"
 #include <android/log.h>
 #include <android/bitmap.h>
 #include <vector>
@@ -212,8 +213,27 @@ void ARManager::getViewMatrix(float* out) const {
         return;
     }
 
-    // 2. If in Classic mode and we have a valid server camera position, use the server camera
-    if (session_ && hasServerCamera_ && camMode_ == CameraMode::Classic) {
+    // 2. Exact GF camera via quaternion (position + rotation)
+    if (hasServerCamera_ && hasServerCameraRot_) {
+        float rot[16];
+        Transform::quatToMat4(serverCamRot_, rot);
+        // GF uses Z-up (X=length, Y=width, Z=height).
+        // OpenGL uses Y-up (X=length, Y=height, Z=width).
+        // Convert rotation: swap Y and Z axes in the matrix.
+        float rotOgl[16];
+        rotOgl[0] = rot[0];   rotOgl[4] = rot[8];   rotOgl[8]  = rot[4];
+        rotOgl[1] = rot[2];   rotOgl[5] = rot[10];  rotOgl[9]  = rot[6];
+        rotOgl[2] = rot[1];   rotOgl[6] = rot[9];   rotOgl[10] = rot[5];
+        // View matrix = transpose (inverse of orthonormal rotation)
+        out[0] = rotOgl[0];   out[4] = rotOgl[1];   out[8]  = rotOgl[2];   out[12] = -(rotOgl[0]*serverCamX_ + rotOgl[1]*serverCamY_ + rotOgl[2]*serverCamZ_);
+        out[1] = rotOgl[4];   out[5] = rotOgl[5];   out[9]  = rotOgl[6];   out[13] = -(rotOgl[4]*serverCamX_ + rotOgl[5]*serverCamY_ + rotOgl[6]*serverCamZ_);
+        out[2] = rotOgl[8];   out[6] = rotOgl[9];   out[10] = rotOgl[10];  out[14] = -(rotOgl[8]*serverCamX_ + rotOgl[9]*serverCamY_ + rotOgl[10]*serverCamZ_);
+        out[3] = 0;           out[7] = 0;           out[11] = 0;           out[15] = 1;
+        return;
+    }
+
+    // 2b. Fallback: server camera position without quaternion (lookAt rebuild)
+    if (hasServerCamera_) {
         lookAt(out, serverCamX_, serverCamY_, serverCamZ_,
                      smoothFocusX_, 0.0f, smoothFocusZ_,
                      0.0f, 1.0f, 0.0f);
@@ -246,15 +266,24 @@ void ARManager::getViewMatrix(float* out) const {
     shudderAccumX_ = shudderAccumX_ * 0.94f + noiseX * shudderAmt * 0.06f;
     shudderAccumY_ = shudderAccumY_ * 0.94f + noiseY * shudderAmt * 0.06f;
 
-    // 3. Camera position — proportional to actual pitch half-width
-    float camDistZ = sceneHalfZ_ * 3.24f;
-    float camHeight = sceneHalfZ_ * 1.53f;
+    // 3. Camera position — sideline broadcast TV framing
+    // Close enough for player detail, low angle for immersive side-view
+    float camDistZ = sceneHalfZ_ * 0.65f;
+    float camHeight = sceneHalfZ_ * 0.18f;
     float camX = targetX * 0.85f + shudderAccumX_;
     float camZ = targetZ * 0.75f - camDistZ;
     float camY = camHeight + shudderAccumY_;
 
+    static int camLogCounter = 0;
+    if ((camLogCounter++ % 60) == 0) {
+        LOGI("[CAMERA] sceneHalf=(%.2f,%.2f) target=(%.2f,%.2f) cam=(%.2f,%.2f,%.2f) distZ=%.2f height=%.2f",
+             sceneHalfX_, sceneHalfZ_, targetX, targetZ, camX, camY, camZ, camDistZ, camHeight);
+    }
+
+    // Look at player head height for horizontal sideline broadcast feel
+    float targetY = 1.60f;
     lookAt(out, camX, camY, camZ,
-                 targetX, 0.0f, targetZ,
+                 targetX, targetY, targetZ,
                  0.0f, 1.0f, 0.0f);
 }
 
@@ -263,15 +292,15 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
         ArCamera_getProjectionMatrix(session_, camera_, near, far, out);
         return;
     }
-    float fovDeg = 38.0f;
-    // On emulator / fallback: never use server camera FOV; always use broadcast FOV
-    if (session_ && hasServerCamera_ && camMode_ == CameraMode::Classic) {
+    float fovDeg = 30.0f;
+    // Use server camera FOV when available (emulator or real device)
+    if (hasServerCamera_) {
         fovDeg = serverCamFov_;
     } else {
-        // Stadium spectator FOV — tighter telephoto for larger player details
-        //    38° midfield → 42° near sideline for strong zoom broadcast feel
+        // Broadcast telephoto — moderate FOV for player detail plus tactical context
+        //    30° midfield → 34° near sideline for consistent zoom feel
         float distRatio = std::abs(smoothFocusX_) / 5.25f; // 0=center, 1=sideline
-        fovDeg = 38.0f + distRatio * 4.0f; // 38° → 42° telephoto zoom
+        fovDeg = 30.0f + distRatio * 4.0f; // 30° → 34° telephoto
     }
     float fov = fovDeg * 3.14159265f / 180.0f;
     float f = 1.0f / tanf(fov / 2.0f);

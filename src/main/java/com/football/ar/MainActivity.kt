@@ -51,6 +51,29 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
     }
 
+    // 100 Hz input loop — decoupled from render frame rate to match server tick rate
+    private val inputHandler = Handler(Looper.getMainLooper())
+    private var inputLoopRunning = false
+    private val inputRunnable = object : Runnable {
+        override fun run() {
+            if (inputLoopRunning) {
+                sendInput(force = true)
+                inputHandler.postDelayed(this, 10)
+            }
+        }
+    }
+
+    private fun startInputLoop() {
+        if (inputLoopRunning) return
+        inputLoopRunning = true
+        inputHandler.post(inputRunnable)
+    }
+
+    private fun stopInputLoop() {
+        inputLoopRunning = false
+        inputHandler.removeCallbacks(inputRunnable)
+    }
+
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
 
@@ -62,6 +85,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
             setRenderer(this@MainActivity)
+            isClickable = true
+            isFocusableInTouchMode = true
+            requestFocus()
             setOnTouchListener { _, event ->
                 this@MainActivity.onTouchEvent(event)
                 true
@@ -158,7 +184,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun connectToLiveKit(lkUrl: String, token: String, roomId: String, mode: String) {
         lkManager = LiveKitManager(this)
         lkManager.connect(lkUrl, token)
-        /* connected */
+        startInputLoop()
     }
 
     private fun showModeSelectionDialogFallback() {
@@ -298,7 +324,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
-                    /* connecting */
+                    startInputLoop()
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to create match: ${e.message}")
@@ -373,6 +399,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
+                    startInputLoop()
                     if (status == "waiting") {
                         /* PvP waiting */
                         android.widget.Toast.makeText(this, "Match créé ! En attente d'un adversaire...", android.widget.Toast.LENGTH_LONG).show()
@@ -484,6 +511,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 runOnUiThread {
                     lkManager = LiveKitManager(this)
                     lkManager.connect(lkUrl, token)
+                    startInputLoop()
                     /* joined PvP */
                     android.widget.Toast.makeText(this, "Match rejoint !", android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -582,9 +610,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val pointerId = event.getPointerId(pointerIdx)
         val x = event.getX(pointerIdx)
         val y = event.getY(pointerIdx)
-        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
-            Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
-        }
+        Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
         jni.nativeOnTouch(x, y, action, pointerId)
         sendInput(force = true)
         return true
@@ -636,7 +662,6 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             latestGameState.copyOf()
         }
         jni.nativeOnFrame(viewMatrix, projMatrix, anchorMatrix, stateCopy)
-        sendInput() // continuous send: buttons held while finger stays down
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -667,6 +692,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopInputLoop()
         if (::lkManager.isInitialized) {
             lkManager.disconnect()
         }

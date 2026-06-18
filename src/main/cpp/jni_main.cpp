@@ -7,7 +7,10 @@
 #include <cmath>
 #include <EGL/egl.h>
 #include <bgfx/bgfx.h>
-#include <bgfx/platform.h>
+
+// Set this to 1 to enable bgfx rendering backend when transition is ready.
+// Currently set to 0 to avoid state conflicts with the active raw GLES 3.0 renderer.
+#define USE_BGFX 0
 
 #include "ARManager.h"
 #include "ARRenderer.h"
@@ -126,7 +129,9 @@ Java_com_football_ar_JniBridge_nativeDestroy(JNIEnv* env, jobject thiz) {
     gRenderer.destroy();
     gRendererInited = false;
     gArManager.destroy();
+#if USE_BGFX
     bgfx::shutdown();
+#endif
     LOGI("Native destroy OK");
 }
 
@@ -144,6 +149,7 @@ JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     gArManager.onSurfaceCreated();
     
+#if USE_BGFX
     EGLContext context = eglGetCurrentContext();
     if (context == EGL_NO_CONTEXT) {
         LOGE("No active EGL context! Skipping bgfx initialization.");
@@ -160,6 +166,7 @@ Java_com_football_ar_JniBridge_nativeSurfaceCreated(JNIEnv* env, jobject thiz) {
     bgfxInit.platformData.context = context;
     bgfx::init(bgfxInit);
     bgfxInited = true;
+#endif
     
     if (gRendererInited) {
         gRenderer.destroy();
@@ -176,7 +183,9 @@ Java_com_football_ar_JniBridge_nativeDisplayChanged(
     gArManager.onDisplayGeometryChanged(rotation, width, height);
     gScreenW = width; gScreenH = height;
     gTouchController.setScreenSize(width, height);
+#if USE_BGFX
     bgfx::reset(width, height, BGFX_RESET_VSYNC);
+#endif
     LOGI("Viewport set: %dx%d rotation=%d", width, height, rotation);
 }
 
@@ -233,16 +242,15 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         // proportionally, just like player and ball rendering does.
         gArManager.setPitchExtents(gRenderer.getSceneHalfX(), gRenderer.getSceneHalfZ());
 
-        if (gArManager.getCameraMode() == CameraMode::Classic) {
-            // Force broadcast TV camera (defined in ARManager.cpp) instead of server camera
-            gArManager.clearServerCamera();
-        } else {
-            gArManager.setServerCamera(
-                peek.camera.pos[0] * kScaleX,
-                peek.camera.pos[2] * 0.1f + 0.08f,
-                peek.camera.pos[1] * kScaleZ,
-                peek.camera.fov);
-        }
+        // Use exact GF camera. Server sends env-normalized coords + quaternion + fov.
+        // GF coords: pos[0]=length/X_FIELD_SCALE, pos[1]=width/Y_FIELD_SCALE, pos[2]=height/Z_FIELD_SCALE
+        // Our 3D world: X=length*kScaleX, Y=height*0.1f, Z=width*kScaleZ (Y-up, OpenGL)
+        gArManager.setServerCamera(
+            peek.camera.pos[0] * kScaleX,
+            peek.camera.pos[2] * 0.1f,
+            peek.camera.pos[1] * kScaleZ,
+            peek.camera.fov,
+            peek.camera.rot);
 
         // Log interpolated render state for diagnostics
         static int renderLogCounter = 0;
@@ -372,7 +380,9 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
                           nullptr, 0, playerAnims, playerVels, playerRotY,
                           playerFlags, playerTeams, playerRoles,
                           &gTouchController, gScreenW, gScreenH);
+#if USE_BGFX
     bgfx::frame();
+#endif
 }
 
 JNIEXPORT void JNICALL

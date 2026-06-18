@@ -910,7 +910,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.14f * pitchScale; // larger players for broadcast visibility (~2.3m proportional on virtual pitch)
+    const float scaleVal = 0.22f * pitchScale; // bigger players for tight broadcast framing (~3.6m proportional, clearly visible on mobile)
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -1569,7 +1569,9 @@ layout(location = 1) in vec2 a_TexCoord;
 out vec2 v_TexCoord;
 void main() {
     gl_Position = vec4(a_Position, 0.0, 1.0);
-    v_TexCoord = a_TexCoord;
+    // FBO texture has V=0 at bottom, but shared UV VBO is set up for
+    // Android camera ExternalOES which has V=0 at top. Flip V for blit.
+    v_TexCoord = vec2(a_TexCoord.x, 1.0 - a_TexCoord.y);
 }
 )";
 static const char* BLIT_FRAG = R"(#version 300 es
