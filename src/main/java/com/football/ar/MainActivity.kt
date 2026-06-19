@@ -52,26 +52,29 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     // 100 Hz input loop — decoupled from render frame rate to match server tick rate
-    private val inputHandler = Handler(Looper.getMainLooper())
-    private var inputLoopRunning = false
-    private val inputRunnable = object : Runnable {
-        override fun run() {
-            if (inputLoopRunning) {
-                sendInput(force = true)
-                inputHandler.postDelayed(this, 10)
-            }
+    private val inputExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+    private var inputFuture: java.util.concurrent.ScheduledFuture<*>? = null
+    private val inputLock = Object()
+
+    private fun startInputLoop() {
+        synchronized(inputLock) {
+            if (inputFuture != null) return
+            Log.i("DZ_INPUT", "START_INPUT_LOOP executor started")
+            inputFuture = inputExecutor.scheduleAtFixedRate({
+                try {
+                    sendInput(force = true, fromExecutor = true)
+                } catch (e: Exception) {
+                    Log.e("DZ_INPUT", "EXECUTOR sendInput crashed: ${e.message}")
+                }
+            }, 0, 10, java.util.concurrent.TimeUnit.MILLISECONDS)
         }
     }
 
-    private fun startInputLoop() {
-        if (inputLoopRunning) return
-        inputLoopRunning = true
-        inputHandler.post(inputRunnable)
-    }
-
     private fun stopInputLoop() {
-        inputLoopRunning = false
-        inputHandler.removeCallbacks(inputRunnable)
+        synchronized(inputLock) {
+            inputFuture?.cancel(false)
+            inputFuture = null
+        }
     }
 
     override fun onCreate(saved: Bundle?) {
@@ -84,6 +87,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
+            // Request 4x MSAA + 24-bit depth + 8-bit stencil for quality rendering.
+            // Falls back gracefully if GPU doesn't support MSAA.
+            setEGLConfigChooser(8, 8, 8, 8, 24, 8)
             setRenderer(this@MainActivity)
             isClickable = true
             isFocusableInTouchMode = true
@@ -570,13 +576,16 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     private var sendInputLogCount = 0
+    private val lastSendInputMsLock = Object()
     private var lastSendInputMs = 0L
     private val soundsLock = Object()
     private var soundsLoaded = false
-    private fun sendInput(force: Boolean = false) {
+    private fun sendInput(force: Boolean = false, fromExecutor: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!force && now - lastSendInputMs < 50) return // throttle continuous sends to ~20 Hz
-        lastSendInputMs = now
+        synchronized(lastSendInputMsLock) {
+            if (!force && now - lastSendInputMs < 50) return // throttle continuous sends to ~20 Hz
+            lastSendInputMs = now
+        }
         if (::lkManager.isInitialized) {
             val inputBytes = jni.nativeGetInputBytes()
             if (inputBytes.isNotEmpty()) {
@@ -591,12 +600,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                     val buttons = buf.getShort(20).toInt() and 0xFFFF
                     val playerIdx = buf.get(22).toInt() and 0xFF
                     val team = buf.get(23).toInt() and 0xFF
-                    val hasInput = (buttons != 0) || (Math.abs(dirX) > 0.01f) || (Math.abs(dirZ) > 0.01f)
-                    if (hasInput) {
-                        Log.i("DZ_INPUT", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
-                    } else if (sendInputLogCount++ % 10 == 0) {
-                        Log.i("DZ_INPUT", "ANDROID_OUT team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
-                    }
+                    val src = if (fromExecutor) "EXEC" else "UI"
+                    Log.i("DZ_INPUT", "ANDROID_OUT[$src] team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
                 }
                 lkManager.sendInput(inputBytes)
             }
@@ -606,12 +611,21 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         event ?: return false
         val action = event.actionMasked
-        val pointerIdx = event.actionIndex
-        val pointerId = event.getPointerId(pointerIdx)
-        val x = event.getX(pointerIdx)
-        val y = event.getY(pointerIdx)
-        Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
-        jni.nativeOnTouch(x, y, action, pointerId)
+        if (action == MotionEvent.ACTION_MOVE) {
+            for (i in 0 until event.pointerCount) {
+                val pointerId = event.getPointerId(i)
+                val x = event.getX(i)
+                val y = event.getY(i)
+                jni.nativeOnTouch(x, y, action, pointerId)
+            }
+        } else {
+            val pointerIdx = event.actionIndex
+            val pointerId = event.getPointerId(pointerIdx)
+            val x = event.getX(pointerIdx)
+            val y = event.getY(pointerIdx)
+            Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
+            jni.nativeOnTouch(x, y, action, pointerId)
+        }
         sendInput(force = true)
         return true
     }

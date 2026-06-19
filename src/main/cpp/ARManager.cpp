@@ -215,21 +215,27 @@ void ARManager::getViewMatrix(float* out) const {
 
     // 2. Exact GF camera via quaternion (position + rotation)
     if (hasServerCamera_ && hasServerCameraRot_) {
-        float rot[16];
-        Transform::quatToMat4(serverCamRot_, rot);
         // GF uses Z-up (X=length, Y=width, Z=height).
         // OpenGL uses Y-up (X=length, Y=height, Z=width).
-        // Convert rotation: swap Y↔Z AND flip X to preserve right-handedness
-        // (det=+1), otherwise the camera yaws 180° towards the wrong end.
-        float rotOgl[16];
-        rotOgl[0] = -rot[0];  rotOgl[4] = -rot[8];  rotOgl[8]  = -rot[4];
-        rotOgl[1] = -rot[2];  rotOgl[5] = -rot[10]; rotOgl[9]  = -rot[6];
-        rotOgl[2] =  rot[1];  rotOgl[6] =  rot[9];  rotOgl[10] =  rot[5];
+        // Basis change: (X,Y,Z)_gf → (-X,Z,Y)_ogl preserves right-handedness.
+        // For a quaternion q = (x,y,z,w) representing rotation around axes (i,j,k),
+        // the converted quaternion is q_ogl = (-x, z, y, w).
+        float qOgl[4] = { -serverCamRot_[0], serverCamRot_[2], serverCamRot_[1], serverCamRot_[3] };
+        float rot[16];
+        Transform::quatToMat4(qOgl, rot);
         // View matrix = transpose (inverse of orthonormal rotation)
-        out[0] = rotOgl[0];   out[4] = rotOgl[1];   out[8]  = rotOgl[2];   out[12] = -(rotOgl[0]*serverCamX_ + rotOgl[1]*serverCamY_ + rotOgl[2]*serverCamZ_);
-        out[1] = rotOgl[4];   out[5] = rotOgl[5];   out[9]  = rotOgl[6];   out[13] = -(rotOgl[4]*serverCamX_ + rotOgl[5]*serverCamY_ + rotOgl[6]*serverCamZ_);
-        out[2] = rotOgl[8];   out[6] = rotOgl[9];   out[10] = rotOgl[10];  out[14] = -(rotOgl[8]*serverCamX_ + rotOgl[9]*serverCamY_ + rotOgl[10]*serverCamZ_);
-        out[3] = 0;           out[7] = 0;           out[11] = 0;           out[15] = 1;
+        out[0] = rot[0];   out[4] = rot[1];   out[8]  = rot[2];   out[12] = -(rot[0]*serverCamX_ + rot[1]*serverCamY_ + rot[2]*serverCamZ_);
+        out[1] = rot[4];   out[5] = rot[5];   out[9]  = rot[6];   out[13] = -(rot[4]*serverCamX_ + rot[5]*serverCamY_ + rot[6]*serverCamZ_);
+        out[2] = rot[8];   out[6] = rot[9];   out[10] = rot[10];  out[14] = -(rot[8]*serverCamX_ + rot[9]*serverCamY_ + rot[10]*serverCamZ_);
+        out[3] = 0;        out[7] = 0;        out[11] = 0;        out[15] = 1;
+
+        static int gfCamLogCounter = 0;
+        if ((gfCamLogCounter++ % 120) == 0) {
+            LOGI("[GF_CAM] pos=(%.2f,%.2f,%.2f) fov=%.1f->%.1f rot=(%.3f,%.3f,%.3f,%.3f)",
+                 serverCamX_, serverCamY_, serverCamZ_,
+                 serverCamFov_, serverCamFov_ * 1.5f,
+                 serverCamRot_[0], serverCamRot_[1], serverCamRot_[2], serverCamRot_[3]);
+        }
         return;
     }
 
@@ -296,7 +302,13 @@ void ARManager::getProjectionMatrix(float* out, float near, float far) const {
     float fovDeg = 30.0f;
     // Use server camera FOV when available (emulator or real device)
     if (hasServerCamera_) {
-        fovDeg = serverCamFov_;
+        // GF desktop FOV (~20°) is designed for large monitors. On mobile screens
+        // the same FOV shows only ~34% of the pitch — too zoomed in. Apply a 1.5x
+        // mobile multiplier and clamp to [30°, 65°] so dynamic GF FOV changes
+        // (goal celebrations ~35°, replays ~56°) still behave naturally.
+        fovDeg = serverCamFov_ * 1.5f;
+        if (fovDeg < 30.0f) fovDeg = 30.0f;
+        if (fovDeg > 65.0f) fovDeg = 65.0f;
     } else {
         // Broadcast telephoto — moderate FOV for player detail plus tactical context
         //    30° midfield → 34° near sideline for consistent zoom feel

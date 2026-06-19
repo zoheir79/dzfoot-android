@@ -938,6 +938,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     static GLint matLoc = -1;
     static GLint timeLoc = -1;
     static GLint blobShadowLoc = -1;
+    static GLint camPosLoc = -1;
     if (shader != lastShader) {
         mvpLoc = glGetUniformLocation(shader, "u_ModelViewProj");
         modelLoc = glGetUniformLocation(shader, "u_ModelMatrix");
@@ -950,6 +951,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
         matLoc = glGetUniformLocation(shader, "u_MaterialType");
         timeLoc = glGetUniformLocation(shader, "u_Time");
         blobShadowLoc = glGetUniformLocation(shader, "u_BlobShadow");
+        camPosLoc = glGetUniformLocation(shader, "u_CamPos");
         lastShader = shader;
     }
 
@@ -957,6 +959,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     if (matLoc >= 0) {
         glUniform1i(matLoc, 0);
     }
+    (void)camPosLoc; // u_CamPos is set globally in renderScene before player rendering
 
     // 5. Draw each limb with its own transform (segmented rigid-body animation)
     int drawCount = 0;
@@ -1251,12 +1254,13 @@ uniform vec3 u_Color;
 uniform sampler2D u_BaseTexture;
 uniform float u_UseTexture;
 uniform int u_MaterialType;
+uniform vec3 u_CamPos;
 
 void main() {
     vec3 N = normalize(v_Normal);
     vec3 L1 = normalize(vec3(0.35, 0.85, 0.45));
     vec3 sunColor = vec3(1.1, 1.02, 0.94);
-    vec3 viewDir = normalize(-v_WorldPos);
+    vec3 viewDir = normalize(u_CamPos - v_WorldPos);
 
     vec3 baseColor = u_Color;
     if (u_UseTexture > 0.5) {
@@ -1319,6 +1323,7 @@ uniform sampler2D u_AdboardTex2;
 uniform sampler2D u_AdboardTex3;
 
 uniform float u_Time;
+uniform vec3 u_CamPos;
 
 vec3 grassPitch() {
     vec3 baseGreen = vec3(0.24, 0.44, 0.16); // slightly deeper/richer green, less neon/washed out
@@ -1477,7 +1482,7 @@ void main() {
     vec3 N = normalize(v_Normal);
     vec3 L1 = normalize(vec3(0.35, 0.85, 0.45));
     vec3 sunColor = vec3(1.1, 1.02, 0.94);
-    vec3 viewDir = normalize(-v_WorldPos);
+    vec3 viewDir = normalize(u_CamPos - v_WorldPos);
 
     vec3 baseColor;
     float alpha = 1.0;
@@ -1693,6 +1698,7 @@ void ARRenderer::init() {
     staticLightSpaceLoc_  = glGetUniformLocation(staticShader_, "u_LightSpaceMatrix");
     staticShadowMapLoc_   = glGetUniformLocation(staticShader_, "u_ShadowMap");
     staticFogDensityLoc_  = glGetUniformLocation(staticShader_, "u_FogDensity");
+    staticCamPosLoc_      = glGetUniformLocation(staticShader_, "u_CamPos");
     staticAdboardLocs_[0] = glGetUniformLocation(staticShader_, "u_AdboardTex0");
     staticAdboardLocs_[1] = glGetUniformLocation(staticShader_, "u_AdboardTex1");
     staticAdboardLocs_[2] = glGetUniformLocation(staticShader_, "u_AdboardTex2");
@@ -1782,23 +1788,27 @@ void ARRenderer::init() {
     t0 = nowMs();
 
     // 2. Goals
+    // goals.glb contains BOTH goals at real-world positions (±52.5m in X).
+    // Scaled by 0.1 to match pitch → goals at ±5.25m in world space.
     int goalL = scene_.addNode("goalL", root);
     if (!loadStaticGLB("goals.glb", scene_.nodes[goalL].staticMesh)) {
         LOGE("Could not load goals.glb, falling back to loadCube");
+        // Fallback: two cubes at ±5.25m (= 52.5m * 0.1f pitch scale)
         scene_.nodes[goalL].staticMesh.loadCube(1.0f);
-        scene_.nodes[goalL].local.position[0] = -10.5f;
+        scene_.nodes[goalL].local.position[0] = -5.25f;
         scene_.nodes[goalL].local.scale[0] = 0.5f;
         scene_.nodes[goalL].local.scale[1] = 1.2f;
         scene_.nodes[goalL].local.scale[2] = 3.0f;
 
         int goalR = scene_.addNode("goalR", root);
         scene_.nodes[goalR].staticMesh.loadCube(1.0f);
-        scene_.nodes[goalR].local.position[0] = 10.5f;
+        scene_.nodes[goalR].local.position[0] = 5.25f;
         scene_.nodes[goalR].local.scale[0] = 0.5f;
         scene_.nodes[goalR].local.scale[1] = 1.2f;
         scene_.nodes[goalR].local.scale[2] = 3.0f;
     } else {
-        // Apply same scale as pitch to keep goals correctly positioned
+        // goals.glb already contains both goals at correct positions in meters.
+        // Apply same 0.1 scale as pitch to convert m → world units.
         scene_.nodes[goalL].local.scale[0] = 0.1f;
         scene_.nodes[goalL].local.scale[1] = 0.1f;
         scene_.nodes[goalL].local.scale[2] = 0.1f;
@@ -1812,11 +1822,12 @@ void ARRenderer::init() {
         scene_.nodes[ball].staticMesh.loadSphere(0.25f, 12, 12);
         scene_.nodes[ball].local.position[1] = 0.25f;
     } else {
-        // Ball: slightly enlarged scale for mobile visibility while keeping proportion
-        // ball.glb is ~22cm diameter; 0.15 makes it readable on small screens
-        scene_.nodes[ball].local.scale[0] = 0.15f;
-        scene_.nodes[ball].local.scale[1] = 0.15f;
-        scene_.nodes[ball].local.scale[2] = 0.15f;
+        // Ball: enlarged for mobile visibility.
+        // Real proportion at 0.1f scale = 2.2cm — invisible on phone screens.
+        // 0.5f gives 11cm — clearly visible while not looking absurd.
+        scene_.nodes[ball].local.scale[0] = 0.5f;
+        scene_.nodes[ball].local.scale[1] = 0.5f;
+        scene_.nodes[ball].local.scale[2] = 0.5f;
     }
     t0 = nowMs();
 
@@ -2042,7 +2053,7 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
 
     float view[16], proj[16];
     ar.getViewMatrix(view);
-    ar.getProjectionMatrix(proj, 0.01f, 100.0f);
+    ar.getProjectionMatrix(proj, 0.1f, 50.0f);
 
     // Combine ARCore view/proj
     float vp[16];
@@ -2069,7 +2080,7 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
             const float bx = clampFloat(ballPosition[0], -1.05f, 1.05f);
             const float bw = clampFloat(ballPosition[1], -0.50f, 0.50f);
             scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
-            scene_.nodes[ballIdx].local.position[1] = ballPosition[2] * 0.1f + 0.08f; // height
+            scene_.nodes[ballIdx].local.position[1] = ballPosition[2] * 0.1f + 0.05f; // height + radius offset
             scene_.nodes[ballIdx].local.position[2] = bw * scaleZ;                    // width (Z-axis matches server Y-axis)
         }
         
@@ -2103,6 +2114,21 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // 3D scene rendered at reduced resolution
+    // Set camera world position for specular lighting (u_CamPos) once per frame.
+    float camWorldX, camWorldY, camWorldZ;
+    ar.getServerCameraPos(camWorldX, camWorldY, camWorldZ);
+    if (ar.getCameraMode() == CameraMode::AR && ar.isMarkerTracked()) {
+        // AR mode: camera position = inverse view matrix translation (column 3)
+        // For column-major view matrix, camera pos = -(R^T * t) = column 3 of inverse
+        camWorldX = -(view[0]*view[12] + view[4]*view[13] + view[8]*view[14]);
+        camWorldY = -(view[1]*view[12] + view[5]*view[13] + view[9]*view[14]);
+        camWorldZ = -(view[2]*view[12] + view[6]*view[13] + view[10]*view[14]);
+    }
+    Shader::use(staticShader_);
+    if (staticCamPosLoc_ >= 0) {
+        glUniform3f(staticCamPosLoc_, camWorldX, camWorldY, camWorldZ);
+    }
+
     renderStaticObjects(vpa, lightSpaceMatrix_);
     renderPlayers(vpa, lightSpaceMatrix_, playerPositions, numPlayers,
                   playerAnims, playerVels, playerRotY, playerFlags, playerTeams, playerRoles);

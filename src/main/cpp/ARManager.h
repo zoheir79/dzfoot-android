@@ -80,6 +80,10 @@ public:
     int displayWidth()  const { return displayWidth_; }
     int displayHeight() const { return displayHeight_; }
 
+    void getServerCameraPos(float& x, float& y, float& z) const {
+        x = serverCamX_; y = serverCamY_; z = serverCamZ_;
+    }
+
 private:
     void setupMarkerDetection(JNIEnv* env, AAssetManager* assetMgr);
     void checkForMarker();

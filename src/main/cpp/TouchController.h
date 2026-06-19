@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <mutex>
 #include "protocol/DZFootProtocol.h"
 
 // Multi-touch virtual controller: joystick (left), action buttons (right), radar (center)
@@ -80,6 +81,7 @@ public:
 private:
     void updateJoystick(int pointerId, float x, float y);
     void updateButtonStates();
+    void updateButtonStatesInternal();
 
     int screenW_ = 1080, screenH_ = 1920;
     dzfoot::PlayerInputPacket input_ = {};
@@ -121,4 +123,6 @@ private:
 
     // Aim
     AimIndicator aim_ = {};
+
+    mutable std::recursive_mutex mutex_;
 };

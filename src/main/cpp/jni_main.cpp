@@ -408,6 +408,14 @@ Java_com_football_ar_JniBridge_nativeGetInputBytes(JNIEnv* env, jobject thiz) {
     const dzfoot::PlayerInputPacket* pkt = reinterpret_cast<const dzfoot::PlayerInputPacket*>(buf);
     LOGI("[DZ_JNI] JNI_INPUT team=%u player=%u dir=(%.3f,%.3f) buttons=0x%04X",
          pkt->team, pkt->playerIdx, pkt->dirX, pkt->dirZ, pkt->buttons);
+    if (pkt->buttons != 0) {
+        LOGI("[DZ_JNI] RAW_HEX bytes[18..25]=%02X%02X %02X%02X %02X%02X %02X%02X "
+             "offsetof_buttons=%zu offsetof_player=%zu sizeof_pkt=%zu",
+             buf[18], buf[19], buf[20], buf[21], buf[22], buf[23], buf[24], buf[25],
+             offsetof(dzfoot::PlayerInputPacket, buttons),
+             offsetof(dzfoot::PlayerInputPacket, playerIdx),
+             sizeof(dzfoot::PlayerInputPacket));
+    }
     jbyteArray result = env->NewByteArray(static_cast<jsize>(pktSize));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(pktSize), (jbyte*)buf);
     return result;

@@ -9,6 +9,7 @@ static double nowMs() {
 }
 
 void TouchController::setScreenSize(int width, int height) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     screenW_ = width;
     screenH_ = height;
     __android_log_print(ANDROID_LOG_INFO, "DZFootJNI", "[DZ_JNI] setScreenSize %dx%d", width, height);
@@ -34,6 +35,7 @@ void TouchController::setScreenSize(int width, int height) {
 
 void TouchController::onTouchDown(int pointerId, float x, float y) {
     if (pointerId < 0 || pointerId >= MAX_POINTERS) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     pointers_[pointerId] = { true, x, y };
 
     __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
@@ -68,6 +70,7 @@ void TouchController::onTouchDown(int pointerId, float x, float y) {
 
 void TouchController::onTouchMove(int pointerId, float x, float y) {
     if (pointerId < 0 || pointerId >= MAX_POINTERS) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!pointers_[pointerId].active) return;
     pointers_[pointerId].x = x;
     pointers_[pointerId].y = y;
@@ -79,6 +82,7 @@ void TouchController::onTouchMove(int pointerId, float x, float y) {
 
 void TouchController::onTouchUp(int pointerId) {
     if (pointerId < 0 || pointerId >= MAX_POINTERS) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     pointers_[pointerId].active = false;
 
     if (joyPointer_ == pointerId) {
@@ -101,6 +105,7 @@ void TouchController::onTouchUp(int pointerId) {
 }
 
 void TouchController::updateJoystick(int pointerId, float x, float y) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     float dx = x - joyCx_;
     float dy = y - joyCy_;
     float len = std::sqrt(dx*dx + dy*dy);
@@ -119,7 +124,7 @@ void TouchController::updateJoystick(int pointerId, float x, float y) {
     input_.dirZ = -joyStickY_; // invert Y so up on stick = forward
 }
 
-void TouchController::updateButtonStates() {
+void TouchController::updateButtonStatesInternal() {
     // recompute aim indicator based on active buttons + joystick direction
     bool anyAction = (input_.buttons & (dzfoot::BUTTON_PASS | dzfoot::BUTTON_SHOT | dzfoot::BUTTON_KICK | dzfoot::BUTTON_HIGH_PASS)) != 0;
     if (anyAction && (std::fabs(input_.dirX) > 0.1f || std::fabs(input_.dirZ) > 0.1f)) {
@@ -136,21 +141,28 @@ void TouchController::updateButtonStates() {
     }
 }
 
-void TouchController::setActionShot(bool on)      { if (on) input_.buttons |= dzfoot::BUTTON_SHOT; else input_.buttons &= ~dzfoot::BUTTON_SHOT; updateButtonStates(); }
-void TouchController::setActionPass(bool on)       { if (on) input_.buttons |= dzfoot::BUTTON_PASS; else input_.buttons &= ~dzfoot::BUTTON_PASS; updateButtonStates(); }
-void TouchController::setActionKick(bool on)       { if (on) input_.buttons |= dzfoot::BUTTON_KICK; else input_.buttons &= ~dzfoot::BUTTON_KICK; updateButtonStates(); }
-void TouchController::setActionDribble(bool on)     { if (on) input_.buttons |= dzfoot::BUTTON_DRIBBLE; else input_.buttons &= ~dzfoot::BUTTON_DRIBBLE; updateButtonStates(); }
-void TouchController::setActionHighPass(bool on)    { if (on) input_.buttons |= dzfoot::BUTTON_HIGH_PASS; else input_.buttons &= ~dzfoot::BUTTON_HIGH_PASS; updateButtonStates(); }
-void TouchController::setActionSliding(bool on)     { if (on) input_.buttons |= dzfoot::BUTTON_SLIDING; else input_.buttons &= ~dzfoot::BUTTON_SLIDING; updateButtonStates(); }
-void TouchController::setActionSwitchPlayer(bool on){ if (on) input_.buttons |= dzfoot::BUTTON_SWITCH_PLAYER; else input_.buttons &= ~dzfoot::BUTTON_SWITCH_PLAYER; updateButtonStates(); }
-void TouchController::setSprint(bool on)            { if (on) input_.buttons |= dzfoot::BUTTON_SPRINT; else input_.buttons &= ~dzfoot::BUTTON_SPRINT; updateButtonStates(); }
+void TouchController::updateButtonStates() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    updateButtonStatesInternal();
+}
+
+void TouchController::setActionShot(bool on)      { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_SHOT; else input_.buttons &= ~dzfoot::BUTTON_SHOT; updateButtonStatesInternal(); }
+void TouchController::setActionPass(bool on)       { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_PASS; else input_.buttons &= ~dzfoot::BUTTON_PASS; updateButtonStatesInternal(); }
+void TouchController::setActionKick(bool on)       { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_KICK; else input_.buttons &= ~dzfoot::BUTTON_KICK; updateButtonStatesInternal(); }
+void TouchController::setActionDribble(bool on)     { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_DRIBBLE; else input_.buttons &= ~dzfoot::BUTTON_DRIBBLE; updateButtonStatesInternal(); }
+void TouchController::setActionHighPass(bool on)    { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_HIGH_PASS; else input_.buttons &= ~dzfoot::BUTTON_HIGH_PASS; updateButtonStatesInternal(); }
+void TouchController::setActionSliding(bool on)     { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_SLIDING; else input_.buttons &= ~dzfoot::BUTTON_SLIDING; updateButtonStatesInternal(); }
+void TouchController::setActionSwitchPlayer(bool on){ std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_SWITCH_PLAYER; else input_.buttons &= ~dzfoot::BUTTON_SWITCH_PLAYER; updateButtonStatesInternal(); }
+void TouchController::setSprint(bool on)            { std::lock_guard<std::recursive_mutex> lock(mutex_); if (on) input_.buttons |= dzfoot::BUTTON_SPRINT; else input_.buttons &= ~dzfoot::BUTTON_SPRINT; updateButtonStatesInternal(); }
 
 void TouchController::setActivePlayer(uint8_t team, uint8_t playerIdx) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     activeTeam_ = team;
     activePlayerIdx_ = playerIdx;
 }
 
 void TouchController::applyCameraRotation(float camFwdX, float camFwdZ) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // Normalize camera forward on XZ plane
     float len = std::sqrt(camFwdX * camFwdX + camFwdZ * camFwdZ);
     if (len < 0.0001f) return;
@@ -179,6 +191,7 @@ void TouchController::applyCameraRotation(float camFwdX, float camFwdZ) {
 
 void TouchController::serialize(uint8_t* out, size_t maxLen) const {
     if (maxLen < sizeof(dzfoot::PlayerInputPacket)) return;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     dzfoot::PlayerInputPacket pkt = input_;
     pkt.team       = activeTeam_;
     pkt.playerIdx  = activePlayerIdx_;
@@ -191,10 +204,12 @@ void TouchController::serialize(uint8_t* out, size_t maxLen) const {
 }
 
 TouchController::JoystickState TouchController::getJoystickState() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return { joyCx_, joyCy_, joyStickX_, joyStickY_, joyRadius_, joyActive_ };
 }
 
 int TouchController::getActionButtons(ButtonState out[MAX_ACTION_BUTTONS]) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     double t = nowMs();
     for (int i = 0; i < numButtons_; ++i) {
         float power = 0.0f;
@@ -209,6 +224,7 @@ int TouchController::getActionButtons(ButtonState out[MAX_ACTION_BUTTONS]) const
 }
 
 float TouchController::getChargePower(uint16_t buttonMask) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     double t = nowMs();
     for (int i = 0; i < numButtons_; ++i) {
         if (buttons_[i].buttonMask == buttonMask && buttons_[i].pressed) {
@@ -220,6 +236,7 @@ float TouchController::getChargePower(uint16_t buttonMask) const {
 }
 
 void TouchController::updateRadar(const dzfoot::GameStatePacket& gs) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     numRadarDots_ = 0;
     // Ball
     if (numRadarDots_ < MAX_RADAR_DOTS) {
@@ -235,6 +252,7 @@ void TouchController::updateRadar(const dzfoot::GameStatePacket& gs) {
 }
 
 int TouchController::getRadarDots(RadarDot out[MAX_RADAR_DOTS]) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     int n = std::min(numRadarDots_, MAX_RADAR_DOTS);
     std::memcpy(out, radarDots_, n * sizeof(RadarDot));
     return n;

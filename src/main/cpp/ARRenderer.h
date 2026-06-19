@@ -239,6 +239,7 @@ private:
     GLint staticLightSpaceLoc_ = -1;
     GLint staticShadowMapLoc_ = -1;
     GLint staticFogDensityLoc_ = -1;
+    GLint staticCamPosLoc_ = -1;
     GLint staticAdboardLocs_[4] = {-1, -1, -1, -1};
 
     GLint uiOrthoLoc_ = -1;
