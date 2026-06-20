@@ -227,7 +227,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         float playerX = 0.0f, playerZ = 0.0f;
         if (activeIdx >= 0) {
             playerX = peek.players[activeIdx].pos[0] * kScaleX;
-            playerZ = peek.players[activeIdx].pos[1] * kScaleZ;
+            playerZ = -peek.players[activeIdx].pos[1] * kScaleZ;
         }
         // Ball speed for camera shudder intensity
         float ballVx = peek.ball.vel[0];
@@ -235,7 +235,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         float ballSpeed = std::sqrt(ballVx * ballVx + ballVy * ballVy);
         
         gArManager.setCameraFocus(
-            peek.ball.pos[0] * kScaleX, peek.ball.pos[1] * kScaleZ,
+            peek.ball.pos[0] * kScaleX, -peek.ball.pos[1] * kScaleZ,
             playerX, playerZ, ballSpeed);
 
         // Broadcast camera must know actual scene extents to clamp/position itself
@@ -244,11 +244,11 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
 
         // Use exact GF camera. Server sends env-normalized coords + quaternion + fov.
         // GF coords: pos[0]=length/X_FIELD_SCALE, pos[1]=width/Y_FIELD_SCALE, pos[2]=height/Z_FIELD_SCALE
-        // Our 3D world: X=length*kScaleX, Y=height*0.1f, Z=width*kScaleZ (Y-up, OpenGL)
+        // Right-handed OpenGL world: X=length*kScaleX, Y=height*0.1f, Z=-width*kScaleZ
         gArManager.setServerCamera(
             peek.camera.pos[0] * kScaleX,
             peek.camera.pos[2] * 0.1f,
-            peek.camera.pos[1] * kScaleZ,
+            -peek.camera.pos[1] * kScaleZ,
             peek.camera.fov,
             peek.camera.rot);
 
@@ -348,10 +348,10 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         float vy = gs.players[i].vel[1]; // width
         float speed = std::sqrt(vx * vx + vy * vy);
         playerVels[i * 3 + 0] = gs.players[i].dir[0];
-        playerVels[i * 3 + 1] = gs.players[i].dir[1];
+        playerVels[i * 3 + 1] = -gs.players[i].dir[1]; // GF Y maps to -OpenGL Z
         playerVels[i * 3 + 2] = speed;
         
-        playerRotY[i] = gs.players[i].rotY;
+        playerRotY[i] = -gs.players[i].rotY; // GF rotation around Z → OpenGL rotation around Y, sign reversed
         playerFlags[i] = gs.players[i].flags;
         playerTeams[i] = gs.players[i].team;
         playerRoles[i] = gs.players[i].role;
@@ -365,10 +365,10 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerAnims[idx] = gs.officials[i].anim;
         
         playerVels[idx * 3 + 0] = gs.officials[i].dir[0];
-        playerVels[idx * 3 + 1] = gs.officials[i].dir[1];
+        playerVels[idx * 3 + 1] = -gs.officials[i].dir[1];
         playerVels[idx * 3 + 2] = 0.0f; // ignored for officials
         
-        playerRotY[idx] = gs.officials[i].rotY;
+        playerRotY[idx] = -gs.officials[i].rotY;
         playerFlags[idx] = gs.officials[i].flags;
         playerTeams[idx] = gs.officials[i].team; // 2 = officials team
         playerRoles[idx] = gs.officials[i].role; // 0=referee, 1=linesmanN, 2=linesmanS

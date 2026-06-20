@@ -2081,7 +2081,7 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
             const float bw = clampFloat(ballPosition[1], -0.50f, 0.50f);
             scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
             scene_.nodes[ballIdx].local.position[1] = ballPosition[2] * 0.1f + 0.05f; // height + radius offset
-            scene_.nodes[ballIdx].local.position[2] = bw * scaleZ;                    // width (Z-axis matches server Y-axis)
+            scene_.nodes[ballIdx].local.position[2] = -bw * scaleZ;                   // width (GF Y maps to -OpenGL Z)
         }
         
         scene_.update();
@@ -2305,7 +2305,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                 0.4f, 0, 0, 0,
                 0, 0.4f, 0, 0,
                 0, 0, 0.4f, 0,
-                gx * scaleX, gh * 0.1f + 0.6f, gw * scaleZ, 1
+                gx * scaleX, gh * 0.1f + 0.6f, -gw * scaleZ, 1
             };
             float mvp[16];
             mat4Mul(viewProj, localModel, mvp);
@@ -2353,9 +2353,9 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
         float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
         float gh = playerPositions[i * 3 + 2];
-        float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, gw * scaleZ };
+        float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, -gw * scaleZ };
 
-        // Heading: Z-axis matches server Y-axis, so mapping is direct
+        // Heading: GF Y maps to -OpenGL Z, so server direction Y is negated before atan2
         // playerVels[i*3+0..1] = unit direction vector (from server dir[])
         // playerVels[i*3+2]    = scalar speed (from server vel magnitude)
         float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
@@ -2558,7 +2558,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
             float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[i * 3 + 2];
-            float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, gw * scaleZ };
+            float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, -gw * scaleZ };
 
             float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
             float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
@@ -2774,7 +2774,7 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
             float gh = playerPositions[activeIdx * 3 + 2];
             float wx = gx * scaleX;
             float wy = gh * 0.1f * pitchScale + 0.14f * pitchScale;
-            float wz = gw * scaleZ;
+            float wz = -gw * scaleZ;
             // Project world position to screen
             float clip[4];
             for (int j = 0; j < 4; ++j) {
