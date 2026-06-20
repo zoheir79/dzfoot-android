@@ -1780,9 +1780,8 @@ void ARRenderer::init() {
         scene_.nodes[pitch].local.scale[0] = 0.1f;
         scene_.nodes[pitch].local.scale[1] = 0.1f;
         scene_.nodes[pitch].local.scale[2] = 0.1f;
-        constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX = pitchHalf_[0] * 0.1f;
-        const float scaleZ = pitchHalf_[1] * 0.1f / kEnvYHalf;
+        const float scaleZ = pitchHalf_[1] * 0.1f;
         (void)scaleX; (void)scaleZ;
     }
     t0 = nowMs();
@@ -1831,18 +1830,10 @@ void ARRenderer::init() {
     }
     t0 = nowMs();
 
-    // 4. Stadium
+    // 4. Stadium — DISABLED: we only render the pitch, goals, ball and players.
+    // Keep the node slot empty so scene indices stay stable; no GLB parsing/VRAM used.
     int stadium = scene_.addNode("stadium", root);
-    if (!loadStaticGLB("stadium_test.glb", scene_.nodes[stadium].staticMesh)) {
-        LOGE("Could not load stadium_test.glb, falling back to invisible");
-        scene_.nodes[stadium].visible = false;
-    } else {
-        /* stadium loaded — DISABLED for performance, re-enable later */
-        scene_.nodes[stadium].local.scale[0] = 0.1f;
-        scene_.nodes[stadium].local.scale[1] = 0.1f;
-        scene_.nodes[stadium].local.scale[2] = 0.1f;
-        scene_.nodes[stadium].visible = false;
-    }
+    scene_.nodes[stadium].visible = false;
     t0 = nowMs();
 
     // 5. Player Base rigid rig (preload first rig as fallback)
@@ -2074,9 +2065,8 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         if (ballIdx >= 0 && ballPosition) {
             // Map GF env coords to 3D scene units derived from the ACTUAL pitch GLB
             // so players/ball always align with the visible white lines.
-            constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
             const float scaleX  = pitchHalf_[0] * 0.1f;
-            const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+            const float scaleZ  = pitchHalf_[1] * 0.1f;
             const float bx = clampFloat(ballPosition[0], -1.05f, 1.05f);
             const float bw = clampFloat(ballPosition[1], -0.50f, 0.50f);
             scene_.nodes[ballIdx].local.position[0] = bx * scaleX;
@@ -2090,7 +2080,7 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
     // ─── Shadow pass ──────────────────────────────────────────────
     // Build light-space matrix from sun direction (matches shader sunDir L1 = vec3(0.35, 0.85, 0.45))
     float lightView[16], lightProj[16];
-    float ratio = pitchHalf_[0] / 52.5f;
+    const float ratio = 1.0f; // light frustum independent of pitch length
     float eyeX = 17.5f * ratio;
     float eyeY = 42.5f * ratio;
     float eyeZ = 22.5f * ratio;
@@ -2291,9 +2281,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
             glUniform1i(shadowMapLoc, 1);
         }
         // Map GF env coords to 3D scene units derived from the ACTUAL pitch GLB.
-        constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX  = pitchHalf_[0] * 0.1f;
-        const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
+        const float scaleZ  = pitchHalf_[1] * 0.1f;
         for (int i = 0; i < numPlayers; ++i) {
             // Skip non-active players (sent off / substituted)
             uint8_t flags = playerFlags ? playerFlags[i] : 0xFF;
@@ -2338,10 +2327,9 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
 
     // GF env_coord ranges: X in [-1,1] (length), Y in [-0.43,0.43] (width)
     // Map to 3D scene units derived from the ACTUAL pitch GLB.
-    constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
     const float scaleX  = pitchHalf_[0] * 0.1f;
-    const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
-    float pitchScale = pitchHalf_[0] / 52.5f;
+    const float scaleZ  = pitchHalf_[1] * 0.1f;
+    const float pitchScale = 1.0f; // player size independent of pitch length
 
     static int loadCooldown[25] = {};
     for (int i = 0; i < numPlayers; ++i) {
@@ -2497,7 +2485,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                   playerKitTex, playerShortTex,
                   i, dirClip, &cfg,
                   lightSpaceMatrix_, shadowColorTex_,
-                  pitchHalf_[0] / 52.5f);
+                  1.0f); // player size independent of pitch length
 
         (void)cfg; (void)playerKitTex;
     }
@@ -2545,10 +2533,9 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
     // Disable culling: player_base.glb uses open-ended limb meshes that create holes with GL_FRONT
     glDisable(GL_CULL_FACE);
     if (playerPositions) {
-        constexpr float kEnvYHalf = 0.4306f; // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
         const float scaleX  = pitchHalf_[0] * 0.1f;
-        const float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
-        float pitchScale = pitchHalf_[0] / 52.5f;
+        const float scaleZ  = pitchHalf_[1] * 0.1f;
+        const float pitchScale = 1.0f; // player size independent of pitch length
         float teamColor[3] = {0.0f, 0.0f, 0.0f};
 
         for (int i = 0; i < numPlayers; ++i) {
@@ -2575,7 +2562,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
                       0, 0,
                       i, nullptr, nullptr,
                       nullptr, 0,
-                      pitchHalf_[0] / 52.5f);
+                      1.0f); // player size independent of pitch length
         }
     }
 
@@ -2765,10 +2752,9 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
         }
         if (activeIdx >= 0) {
             // Convert GF env coords to world coords (same as renderPlayers)
-            constexpr float kEnvYHalf = 0.4306f;
-            float scaleX  = pitchHalf_[0] * 0.1f;
-            float scaleZ  = pitchHalf_[1] * 0.1f / kEnvYHalf;
-            float pitchScale = pitchHalf_[0] / 52.5f;
+            const float scaleX  = pitchHalf_[0] * 0.1f;
+            const float scaleZ  = pitchHalf_[1] * 0.1f;
+            const float pitchScale = 1.0f; // player size independent of pitch length
             float gx = clampFloat(playerPositions[activeIdx * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[activeIdx * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[activeIdx * 3 + 2];

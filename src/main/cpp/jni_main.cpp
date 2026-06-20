@@ -351,7 +351,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerVels[i * 3 + 1] = -gs.players[i].dir[1]; // GF Y maps to -OpenGL Z
         playerVels[i * 3 + 2] = speed;
         
-        playerRotY[i] = -gs.players[i].rotY; // GF rotation around Z → OpenGL rotation around Y, sign reversed
+        playerRotY[i] = gs.players[i].rotY; // GF yaw (Z-up) → OpenGL yaw (Y-up), same CCW sign
         playerFlags[i] = gs.players[i].flags;
         playerTeams[i] = gs.players[i].team;
         playerRoles[i] = gs.players[i].role;
@@ -368,7 +368,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerVels[idx * 3 + 1] = -gs.officials[i].dir[1];
         playerVels[idx * 3 + 2] = 0.0f; // ignored for officials
         
-        playerRotY[idx] = -gs.officials[i].rotY;
+        playerRotY[idx] = gs.officials[i].rotY;
         playerFlags[idx] = gs.officials[i].flags;
         playerTeams[idx] = gs.officials[i].team; // 2 = officials team
         playerRoles[idx] = gs.officials[i].role; // 0=referee, 1=linesmanN, 2=linesmanS
