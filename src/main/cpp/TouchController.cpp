@@ -177,8 +177,20 @@ void TouchController::applyCameraRotation(float camFwdX, float camFwdZ) {
     float inX = input_.dirX;
     float inZ = input_.dirZ;
 
+    static int camRotLogCounter = 0;
+    if ((camRotLogCounter++ % 120) == 0 && (std::fabs(inX) > 0.01f || std::fabs(inZ) > 0.01f)) {
+        __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
+            "[JOYSTICK] raw=(%.2f,%.2f) camFwd=(%.2f,%.2f) right=(%.2f,%.2f)",
+            inX, inZ, fx, fz, rx, rz);
+    }
+
     input_.dirX = inX * rx + inZ * fx;
     input_.dirZ = inX * rz + inZ * fz;
+
+    if ((camRotLogCounter % 120) == 0 && (std::fabs(inX) > 0.01f || std::fabs(inZ) > 0.01f)) {
+        __android_log_print(ANDROID_LOG_INFO, "DZFootJNI",
+            "[JOYSTICK] rotated=(%.2f,%.2f)", input_.dirX, input_.dirZ);
+    }
 
     // Also rotate aim indicator so pass/shot direction follows camera
     if (aim_.visible) {

@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+# SConstruct for dzfoot_gdext GDExtension
+# Build: scons platform=windows target=template_release
+#        scons platform=android target=template_release arch=arm64
+
+import os
+
+# This SConstruct assumes godot-cpp is cloned as a submodule in godot-cpp/
+# git clone https://github.com/godotengine/godot-cpp.git --branch 4.5.1
+
+env = SConscript("godot-cpp/SConstruct")
+
+env.Append(CPPPATH=["src"])
+
+sources = Glob("src/*.cpp")
+
+if env["platform"] == "android":
+    lib_path = "bin/libdzfoot_gdext.android.{}.{}.arm64.so".format(
+        env["target"].replace("template_", ""),
+        "debug" if env["debug"] else "release"
+    )
+elif env["platform"] == "windows":
+    lib_path = "bin/libdzfoot_gdext.windows.{}.{}.x86_64.{}".format(
+        env["target"].replace("template_", ""),
+        "debug" if env["debug"] else "release",
+        "dll"
+    )
+elif env["platform"] == "linux":
+    lib_path = "bin/libdzfoot_gdext.linux.{}.{}.x86_64.so".format(
+        env["target"].replace("template_", ""),
+        "debug" if env["debug"] else "release"
+    )
+else:
+    lib_path = "bin/libdzfoot_gdext.{}.so".format(env["platform"])
+
+library = env.SharedLibrary(target=lib_path, source=sources)
+
+Default(library)

@@ -1,40 +1,23 @@
 package com.football.ar
 
 import android.content.Context
-import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import java.io.ByteArrayOutputStream
 
+/**
+ * JniBridge — adapted for Godot integration.
+ *
+ * The old native rendering methods (nativeOnFrame, nativeSurfaceCreated, etc.)
+ * have been removed. Godot handles all rendering via GodotAdapter + GDExtension.
+ *
+ * This class now serves only as a utility for:
+ * - Asset decoding (decodeAssetRgba) used by GDExtension for texture loading
+ * - Audio callback bridge (nativeAudioPlay etc. are called from GDExtension)
+ * - ClassLoader access for Godot JNI
+ */
 class JniBridge {
-
-    external fun nativeOnFrame(
-        viewMatrix: FloatArray,
-        projMatrix: FloatArray,
-        anchorMatrix: FloatArray,
-        gameStateData: ByteArray,
-    )
-
-    @Suppress("unused")
-    external fun nativeOnGameStateReceived(data: ByteArray)
-    external fun nativeOnGameEvent(data: ByteArray)
-    external fun nativeOnTacticalState(data: ByteArray)
-    external fun nativeOnMatchSetup(data: ByteArray)
-    external fun nativeInit(context: Context, assetManager: AssetManager, isEmulator: Boolean): Boolean
-    external fun nativeGetBuildMarker(): String
-    external fun nativeDestroy()
-    external fun nativeResume(context: Context)
-    external fun nativePause()
-    external fun nativeSurfaceCreated()
-    external fun nativeDisplayChanged(rotation: Int, width: Int, height: Int)
-    external fun nativeOnTouch(x: Float, y: Float, action: Int, pointerId: Int)
-    external fun nativeGetInputBytes(): ByteArray
-    external fun nativeSetActionKick(on: Boolean)
-    external fun nativeSetActionPass(on: Boolean)
-    external fun nativeSetActionShot(on: Boolean)
-    external fun nativeSetActionDribble(on: Boolean)
-    external fun nativeSetSprint(on: Boolean)
 
     @Suppress("unused")
     fun getClassLoader(): ClassLoader {
@@ -42,19 +25,19 @@ class JniBridge {
     }
 
     companion object {
+        private const val TAG = "JniBridge"
+
         init {
-            Log.i("JniBridge", "Loading native library football_ar ...")
-            System.loadLibrary("football_ar")
-            Log.i("JniBridge", "Native library football_ar loaded OK")
+            // Godot's libgodot_android.so is loaded by the Godot AAR.
+            // The old football_ar native library is no longer needed.
+            Log.i(TAG, "JniBridge initialized (Godot mode — no native rendering library)")
         }
 
-        // VERY explicit static method
         @JvmStatic
         fun getClassLoader(context: Context): ClassLoader {
             return context.classLoader
         }
-        
-        // Static variant without args if needed
+
         @JvmStatic
         @Suppress("unused")
         fun getClassLoaderStatic(): ClassLoader {

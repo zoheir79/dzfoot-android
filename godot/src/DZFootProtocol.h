@@ -1,0 +1,356 @@
+#pragma once
+#include <cstdint>
+#include <cstddef>
+#include <type_traits>
+#include <cmath>
+
+// ============================================================================
+// DZFoot Shared Binary Protocol v1
+// Source of truth: dzfoot-gf-server/protocol/DZFootProtocol.h
+// Sync copy    : dzfoot-android/src/main/cpp/protocol/DZFootProtocol.h
+// Endianness   : Little-endian (both x86_64 Linux server and ARM64 Android)
+// Rules        : No bool, no int, no pointers, no std::string/std::vector
+// ============================================================================
+
+namespace dzfoot {
+
+constexpr uint32_t DZ_MAGIC           = 0x54465A44; // 'DZFT' little-endian
+constexpr uint16_t DZ_PROTOCOL_VERSION = 1;
+constexpr uint8_t  DZ_MAX_PLAYERS      = 22;
+// kSimFrequencyHz is the SERVER PHYSICS TICK RATE (not state-update nor broadcast rate).
+// GameStatePacket.tick is a physics tick counter. The client must use this frequency
+// to convert tick → milliseconds for interpolation and dead reckoning.
+constexpr int      kSimFrequencyHz     = 100;
+
+// ------------------------------------------------------------------
+// Packet header (present in every packet)
+// ------------------------------------------------------------------
+enum PacketType : uint16_t {
+    PACKET_GAME_STATE   = 1,
+    PACKET_MATCH_EVENT  = 2,
+    PACKET_PLAYER_INPUT = 3,
+    PACKET_MATCH_SETUP  = 4,
+    PACKET_TACTICAL_STATE = 5
+};
+
+struct PacketHeader {
+    uint32_t magic;      // DZ_MAGIC ('DZFT')
+    uint16_t version;    // DZ_PROTOCOL_VERSION
+    uint16_t type;       // PacketType
+    uint16_t size;       // sizeof(entire packet)
+    uint16_t flags;      // reserved (0)
+};
+static_assert(sizeof(PacketHeader) == 12, "PacketHeader size must be exactly 12 bytes");
+static_assert(std::is_standard_layout<PacketHeader>::value, "PacketHeader must be standard layout");
+
+// ------------------------------------------------------------------
+// Animation IDs (shared server + client)
+// ------------------------------------------------------------------
+enum AnimId : uint8_t {
+    ANIM_IDLE      = 0,
+    ANIM_WALK      = 1,
+    ANIM_RUN       = 2,
+    ANIM_SPRINT    = 3,
+    ANIM_SHOOT_R   = 4,
+    ANIM_SHOOT_L   = 5,
+    ANIM_PASS_S    = 6,
+    ANIM_PASS_L    = 7,
+    ANIM_HEADER    = 8,
+    ANIM_TACKLE    = 9,
+    ANIM_DRIBBLE   = 10,
+    ANIM_FALL      = 11,
+    ANIM_CELEBRATE = 12,
+    ANIM_GK_IDLE   = 13,
+    ANIM_GK_DIVE_L = 14,
+    ANIM_GK_DIVE_R = 15,
+    ANIM_GK_CATCH  = 16,
+    ANIM_COUNT
+};
+
+// ------------------------------------------------------------------
+// Network state structs (packed tightly, no padding surprises)
+// ------------------------------------------------------------------
+#pragma pack(push, 1)
+
+struct NetworkBallState {
+    float  pos[3];
+    float  vel[3];
+    float  rot[3];
+    int8_t ownedTeam;
+    int8_t ownedPlayer;
+    uint8_t _pad[2];
+};
+static_assert(sizeof(NetworkBallState) == 40, "NetworkBallState size mismatch");
+
+struct NetworkPlayerState {
+    float  pos[3];
+    float  vel[3];
+    float  dir[3];
+    float  rotY;
+    uint8_t anim;
+    uint8_t team;
+    uint8_t role;
+    uint8_t flags;
+    float  tiredFactor;
+};
+static_assert(sizeof(NetworkPlayerState) == 48, "NetworkPlayerState size mismatch");
+
+struct NetworkOfficialState {
+    float  pos[3];
+    float  dir[3];
+    float  rotY;
+    uint8_t anim;
+    uint8_t team;
+    uint8_t role;
+    uint8_t flags;
+};
+static_assert(sizeof(NetworkOfficialState) == 32, "NetworkOfficialState size mismatch");
+
+struct NetworkCameraState {
+    float pos[3];    // 12
+    float rot[4];    // 16 (Quaternion)
+    float fov;       // 4
+};
+static_assert(sizeof(NetworkCameraState) == 32, "NetworkCameraState size mismatch");
+
+// ------------------------------------------------------------------
+// GameState packet (topic "gs", unreliable)
+// ------------------------------------------------------------------
+struct GameStatePacket {
+    PacketHeader header;
+    uint32_t tick;
+    uint64_t timestampUs;
+    uint8_t  gameMode;
+    uint8_t  gameFlags;
+    uint8_t  score[2];
+    float    timer;
+    NetworkBallState ball;
+    NetworkPlayerState players[DZ_MAX_PLAYERS];
+    NetworkOfficialState officials[3];
+    NetworkCameraState camera;
+};
+static_assert(sizeof(GameStatePacket) == 12 + 4 + 8 + 1 + 1 + 2 + 4 + 40 + (48 * 22) + (32 * 3) + 32, "GameStatePacket size sanity check");
+static_assert(sizeof(GameStatePacket) < 1300, "GameStatePacket must fit in a single datagram");
+
+// ------------------------------------------------------------------
+// MatchEvent packet (topic "ev", reliable)
+// ------------------------------------------------------------------
+struct MatchEventPacket {
+    PacketHeader header;
+    uint8_t  eventType;   // EventType enum
+    uint8_t  team;
+    uint8_t  playerIdx;
+    uint8_t  extra;
+    float    pos[3];
+    uint32_t tick;
+    uint8_t  score[2];
+    uint8_t  _pad[2];
+};
+static_assert(sizeof(MatchEventPacket) == 12 + 1 + 1 + 1 + 1 + 12 + 4 + 2 + 2, "MatchEventPacket size sanity check");
+
+// ------------------------------------------------------------------
+// PlayerInput packet (topic "in", reliable or unreliable)
+// ------------------------------------------------------------------
+struct PlayerInputPacket {
+    PacketHeader header;
+    float    dirX;
+    float    dirZ;
+    uint16_t buttons;     // bitmask: see BUTTON_* below
+    uint8_t  playerIdx;   // 0..10
+    uint8_t  team;        // 0 or 1
+    uint32_t clientTick;  // anti-lag: local tick
+    uint64_t clientTimeUs;// anti-lag: local timestamp
+};
+static_assert(sizeof(PlayerInputPacket) == 12 + 4 + 4 + 2 + 1 + 1 + 4 + 8, "PlayerInputPacket size sanity check");
+
+// ------------------------------------------------------------------
+// EventType enum (for MatchEventPacket.eventType)
+// ------------------------------------------------------------------
+enum EventType : uint8_t {
+    EVENT_GOAL         = 0,
+    EVENT_YELLOW_CARD  = 1,
+    EVENT_RED_CARD     = 2,
+    EVENT_SUBSTITUTION = 3,
+    EVENT_CORNER       = 4,
+    EVENT_THROW_IN     = 5,
+    EVENT_FREE_KICK    = 6,
+    EVENT_PENALTY      = 7,
+    EVENT_KICK_OFF     = 8,
+    EVENT_END_MATCH    = 9,
+    EVENT_HALF_TIME    = 10,
+    EVENT_GOAL_KICK    = 11,
+    EVENT_OFFSIDE      = 12,
+    EVENT_FOUL         = 13,
+    EVENT_POSSESSION_CHANGE = 14,
+    EVENT_SHOT         = 15,
+    EVENT_PASS         = 16,
+    EVENT_TACKLE       = 17
+};
+
+enum TacticalIntent : uint8_t {
+    TACTICAL_INTENT_NONE = 0,
+    TACTICAL_INTENT_HOLD_FORMATION = 1,
+    TACTICAL_INTENT_CHASE_BALL = 2,
+    TACTICAL_INTENT_HAS_BALL = 3,
+    TACTICAL_INTENT_ATTACKING_RUN = 4,
+    TACTICAL_INTENT_PRESS = 5,
+    TACTICAL_INTENT_SUPPORT = 6,
+    TACTICAL_INTENT_MARK = 7,
+    TACTICAL_INTENT_SET_PIECE_TAKER = 8,
+    TACTICAL_INTENT_KEEPER_RUSH = 9
+};
+
+// ------------------------------------------------------------------
+// Button bitmask for PlayerInputPacket.buttons
+// ------------------------------------------------------------------
+constexpr uint16_t BUTTON_KICK          = 1 << 0;  // long pass
+constexpr uint16_t BUTTON_PASS            = 1 << 1;  // short pass
+constexpr uint16_t BUTTON_HIGH_PASS       = 1 << 2;  // high/lob pass
+constexpr uint16_t BUTTON_SHOT            = 1 << 3;
+constexpr uint16_t BUTTON_SLIDING       = 1 << 4;  // tackle
+constexpr uint16_t BUTTON_DRIBBLE       = 1 << 5;
+constexpr uint16_t BUTTON_SPRINT        = 1 << 6;
+constexpr uint16_t BUTTON_SWITCH_PLAYER = 1 << 7;
+
+// ------------------------------------------------------------------
+// MatchSetup packet (sent once at startup, topic "ev" reliable)
+// ------------------------------------------------------------------
+constexpr uint8_t kNumPlayerStats = 22;
+constexpr uint8_t kMaxNameLen     = 32;
+constexpr uint8_t kMaxHairLen     = 16;
+
+struct PlayerStaticInfo {
+    uint8_t  index;              // 0..21
+    uint8_t  team;               // 0 or 1
+    uint8_t  role;               // e_PlayerRole
+    char     lastName[kMaxNameLen];
+    float    height;             // meters
+    uint8_t  skinColor;          // 0..6 (7 tones)
+    uint8_t  hairStyle;          // 0..5 (short, long, mohawk, curly, ponytail, bald)
+    uint8_t  hairColor;          // 0..7 (black, dark_brown, brown, light_brown, blonde, red, grey, white)
+    float    stats[kNumPlayerStats]; // physical/technical/mental
+    uint8_t  playerNumber;       // jersey number (1..99)
+    uint8_t  bodyType;           // 0=thin, 1=average, 2=muscular, 3=heavy
+    uint8_t  beardStyle;         // 0=none, 1=stubble, 2=short, 3=full
+    uint8_t  eyeColor;           // 0=brown, 1=blue, 2=green, 3=hazel, 4=grey
+};
+static_assert(sizeof(PlayerStaticInfo) == 3 + kMaxNameLen + 4 + 1 + 1 + 1 + (4 * kNumPlayerStats) + 1 + 3, "PlayerStaticInfo size check");
+
+struct MatchSetupPacket {
+    PacketHeader header;
+    uint8_t  playerCount;        // usually 22
+    char     teamAName[kMaxNameLen];
+    char     teamBName[kMaxNameLen];
+    uint8_t  teamAColor1[3];     // RGB primary
+    uint8_t  teamAColor2[3];     // RGB secondary
+    uint8_t  teamBColor1[3];     // RGB primary
+    uint8_t  teamBColor2[3];     // RGB secondary
+    uint8_t  stadiumId;
+    uint8_t  durationMinutes;
+    uint8_t  _pad[2];
+    PlayerStaticInfo players[DZ_MAX_PLAYERS];
+};
+static_assert(sizeof(MatchSetupPacket) == 12 + 1 + kMaxNameLen * 2 + 12 + 1 + 1 + 2 + (sizeof(PlayerStaticInfo) * DZ_MAX_PLAYERS), "MatchSetupPacket size check");
+
+struct TacticalPlayerState {
+    float formationTarget[3];
+    float targetPos[3];
+    float stamina01;
+    float formationDistance;
+    uint8_t staticRole;
+    uint8_t dynamicRole;
+    uint8_t functionType;
+    uint8_t velocityType;
+    uint8_t aiIntent;
+    uint8_t targetTeam;
+    uint8_t targetPlayer;
+    uint8_t actionFlags;
+    uint16_t tacticalFlags;
+    uint16_t _pad;
+};
+static_assert(sizeof(TacticalPlayerState) == 44, "TacticalPlayerState size mismatch");
+
+struct TacticalStatePacket {
+    PacketHeader header;
+    uint32_t tick;
+    uint64_t timestampUs;
+    uint8_t matchPhase;
+    uint8_t setPieceType;
+    uint8_t setPieceTeam;
+    uint8_t setPieceTaker;
+    uint8_t selectedPlayer[2];
+    uint8_t designatedPlayer[2];
+    uint8_t bestPossessionPlayer[2];
+    uint8_t lastTouchTeam;
+    uint8_t lastTouchPlayer;
+    float offsideTrapX[2];
+    TacticalPlayerState players[DZ_MAX_PLAYERS];
+};
+static_assert(sizeof(TacticalStatePacket) == 12 + 4 + 8 + 1 + 1 + 1 + 1 + 2 + 2 + 2 + 1 + 1 + 8 + (44 * 22), "TacticalStatePacket size sanity check");
+static_assert(sizeof(TacticalStatePacket) < 1200, "TacticalStatePacket must fit in a single datagram");
+
+#pragma pack(pop)
+
+// ============================================================================
+// Validation helpers (use before casting raw bytes to structs)
+// ============================================================================
+
+inline bool validatePacketHeader(const uint8_t* data, size_t len, uint16_t expectedType, size_t expectedSize) {
+    if (len < sizeof(PacketHeader)) return false;
+    const PacketHeader* h = reinterpret_cast<const PacketHeader*>(data);
+    if (h->magic != DZ_MAGIC) return false;
+    if (h->version != DZ_PROTOCOL_VERSION) return false;
+    if (h->type != expectedType) return false;
+    if (h->size != expectedSize) return false;
+    if (len < expectedSize) return false;
+    return true;
+}
+
+inline bool validateGameStatePacket(const uint8_t* data, size_t len) {
+    return validatePacketHeader(data, len, PACKET_GAME_STATE, sizeof(GameStatePacket));
+}
+
+inline bool validateMatchEventPacket(const uint8_t* data, size_t len) {
+    return validatePacketHeader(data, len, PACKET_MATCH_EVENT, sizeof(MatchEventPacket));
+}
+
+inline bool validatePlayerInputPacket(const uint8_t* data, size_t len) {
+    return validatePacketHeader(data, len, PACKET_PLAYER_INPUT, sizeof(PlayerInputPacket));
+}
+
+inline bool validateMatchSetupPacket(const uint8_t* data, size_t len) {
+    return validatePacketHeader(data, len, PACKET_MATCH_SETUP, sizeof(MatchSetupPacket));
+}
+
+inline bool validateTacticalStatePacket(const uint8_t* data, size_t len) {
+    return validatePacketHeader(data, len, PACKET_TACTICAL_STATE, sizeof(TacticalStatePacket));
+}
+
+// ============================================================================
+// Sanitization helpers (use after deserialization)
+// ============================================================================
+
+inline bool isFiniteVec3(const float* v) {
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
+
+inline bool sanitizePlayerInput(PlayerInputPacket& in) {
+    if (!std::isfinite(in.dirX) || !std::isfinite(in.dirZ)) return false;
+    // clamp direction
+    if (in.dirX < -1.0f) in.dirX = -1.0f;
+    if (in.dirX >  1.0f) in.dirX =  1.0f;
+    if (in.dirZ < -1.0f) in.dirZ = -1.0f;
+    if (in.dirZ >  1.0f) in.dirZ =  1.0f;
+    // normalize if length > 1
+    float lenSq = in.dirX * in.dirX + in.dirZ * in.dirZ;
+    if (lenSq > 1.0f) {
+        float invLen = 1.0f / std::sqrt(lenSq);
+        in.dirX *= invLen;
+        in.dirZ *= invLen;
+    }
+    if (in.team > 1) return false;
+    if (in.playerIdx > 10) return false;
+    return true;
+}
+
+} // namespace dzfoot

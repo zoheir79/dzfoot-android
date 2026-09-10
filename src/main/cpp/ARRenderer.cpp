@@ -435,6 +435,7 @@ void PlayerRig::destroy() {
     nodes.clear();
     skin = GLBSkin();
     hasSkin = false;
+    minY_ = 0.0f;
     for (int s = 0; s < 7; ++s) {
         if (skinTexs[s]) {
             glDeleteTextures(1, &skinTexs[s]);
@@ -529,6 +530,19 @@ bool PlayerRig::loadBody(const char* bodyGlb) {
         hasSkin = true;
     }
     animations = std::move(scene.animations);
+
+    // Compute bounding box minY for feet-at-y=0 placement
+    float minBBoxY = 1e9f;
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        if (scene.nodes[i].meshIndex >= 0 && scene.nodes[i].meshIndex < (int)scene.meshes.size()) {
+            for (const auto& prim : scene.meshes[scene.nodes[i].meshIndex].primitives) {
+                for (const auto& sv : prim.vertices) {
+                    if (sv.pos[1] < minBBoxY) minBBoxY = sv.pos[1];
+                }
+            }
+        }
+    }
+    minY_ = (minBBoxY < 1e8f) ? minBBoxY : 0.0f;
 
     // Load shared textures (kit, shoe) — skin/hair swapped per-player at runtime
     skinTex = generateProceduralTexture(0); // fallback skin tone (warm olive)
@@ -910,7 +924,7 @@ void PlayerRig::draw(const float* viewProj, const float* playerWorld, float rotY
     float qRot[4] = { 0.0f, std::sin(modelYaw * 0.5f), 0.0f, std::cos(modelYaw * 0.5f) };
     Transform::quatToMat4(qRot, modelRot);
 
-    const float scaleVal = 0.22f * pitchScale; // bigger players for tight broadcast framing (~3.6m proportional, clearly visible on mobile)
+    const float scaleVal = 0.1f * pitchScale; // 1m = 0.1u: 1.80m player → 0.18u exactly
     modelRot[0] *= scaleVal; modelRot[1] *= scaleVal; modelRot[2] *= scaleVal;
     modelRot[4] *= scaleVal; modelRot[5] *= scaleVal; modelRot[6] *= scaleVal;
     modelRot[8] *= scaleVal; modelRot[9] *= scaleVal; modelRot[10] *= scaleVal;
@@ -1674,6 +1688,9 @@ static bool isLoopingAnim(uint8_t animId) {
 // ─── ARRenderer implementation ───────────────────────────────────
 
 void ARRenderer::init() {
+    LOGI("[LOADING] init start");
+    loadingState_ = LoadingState::CompilingShaders;
+    loadingProgress_ = 5;
     double t0 = nowMs();
     cameraShader_ = Shader::compile(CAMERA_VERT, CAMERA_FRAG);
     skinnedShader_ = Shader::compile(SKINNED_VERT, SKINNED_FRAG);
@@ -1682,6 +1699,13 @@ void ARRenderer::init() {
     uiShader_ = Shader::compile(UI_VERT, UI_FRAG);
     blitShader_ = Shader::compile(BLIT_VERT, BLIT_FRAG);
     (void)t0; // timing logs removed
+    if (cameraShader_ == 0 || staticShader_ == 0 || uiShader_ == 0) {
+        LOGE("[LOADING] shader compilation failed");
+        loadingState_ = LoadingState::Failed;
+        loadingProgress_ = 0;
+        return;
+    }
+    LOGI("[LOADING] shaders compiled ok cam=%u static=%u ui=%u", cameraShader_, staticShader_, uiShader_);
 
     // Cache uniform locations once — glGetUniformLocation is extremely expensive on mobile drivers
     blitTexLoc_ = glGetUniformLocation(blitShader_, "u_Texture");
@@ -1711,6 +1735,9 @@ void ARRenderer::init() {
 
     glGenBuffers(1, &uiVbo_);
 
+    loadingState_ = LoadingState::LoadingTextures;
+    loadingProgress_ = 20;
+    LOGI("[LOADING] loading textures");
     t0 = nowMs();
     pitchTex_ = loadAssetTexture("beta2/media/textures/pitch/seamlessgrass08.png");
     if (!pitchTex_) pitchTex_ = loadAssetTexture("beta2/media/textures/pitch/pitch_01.png");
@@ -1738,7 +1765,11 @@ void ARRenderer::init() {
     adboardTex_[3] = loadAssetTexture("beta2/media/textures/adboards/ad_3xblast01.png");
     t0 = nowMs();
     (void)pitchTex_; (void)ballTex_; (void)pitchOverlayTex_;
+    LOGI("[LOADING] textures loaded pitch=%u ball=%u", pitchTex_, ballTex_);
 
+    loadingState_ = LoadingState::LoadingAnimations;
+    loadingProgress_ = 35;
+    LOGI("[LOADING] loading animations");
     // Load compiled directional animations from asset folder
     dirAnimBank_.load(gAssetManager, "directional_anims.bin");
     t0 = nowMs();
@@ -1753,6 +1784,9 @@ void ARRenderer::init() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(uvs), uvs, GL_STATIC_DRAW);
     t0 = nowMs();
 
+    loadingState_ = LoadingState::LoadingSceneAssets;
+    loadingProgress_ = 50;
+    LOGI("[LOADING] loading scene assets");
     // Build static scene graph
     int root = scene_.addNode("root", -1);
     
@@ -1836,9 +1870,12 @@ void ARRenderer::init() {
     scene_.nodes[stadium].visible = false;
     t0 = nowMs();
 
+    loadingState_ = LoadingState::BuildingRigs;
+    loadingProgress_ = 75;
+    LOGI("[LOADING] building rigs");
     // 5. Player Base rigid rig (preload first rig as fallback)
     if (!playerRigs_[0].load("player_base.glb")) {
-        LOGE("Could not load player_base.glb rig!");
+        LOGE("[LOADING] could not load player_base.glb rig!");
     }
     t0 = nowMs();
 
@@ -1870,11 +1907,19 @@ void ARRenderer::init() {
     glDrawBuffers(1, &drawBuf);
     GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
-        LOGE("Shadow FBO incomplete: 0x%x", fboStatus);
+        LOGE("[LOADING] shadow FBO incomplete: 0x%x", fboStatus);
+        loadingState_ = LoadingState::Failed;
+        loadingProgress_ = 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    LOGI("[LOADING] shadow FBO complete");
     (void)nowMs();
 
+    loadingState_ = LoadingState::Ready;
+    loadingProgress_ = 100;
+    LOGI("[LOADING] Renderer ready — shaders=%u static=%u pitch=%u", cameraShader_, staticShader_, pitchTex_);
     scene_.update();
     (void)nowMs();
 }
@@ -1951,6 +1996,44 @@ void ARRenderer::setMatchSetup(const dzfoot::MatchSetupPacket& setup) {
     (void)setup;
 }
 
+void ARRenderer::preloadPlayerRigs() {
+    if (!hasSetup_) return;
+    LOGI("[LOADING] preloading player rigs");
+    for (int i = 0; i < 22; ++i) {
+        if (!playerRigs_[i].nodes.empty()) continue; // already loaded
+
+        AvatarConfig cfg;
+        cfg.bodyType = 1; cfg.hairStyle = 0; cfg.beardStyle = 0;
+        cfg.skinColor = 3; cfg.hairColor = 0; cfg.playerNumber = 0; cfg.height = 1.80f;
+        const auto& p = setup_.players[i];
+        cfg.bodyType     = (p.bodyType < 4)    ? p.bodyType    : 1;
+        cfg.hairStyle    = (p.hairStyle < 6)   ? p.hairStyle   : 0;
+        cfg.beardStyle   = (p.beardStyle < 4)  ? p.beardStyle  : 0;
+        cfg.skinColor    = (p.skinColor < 7)   ? p.skinColor   : 3;
+        cfg.hairColor    = (p.hairColor < 8)   ? p.hairColor   : 0;
+        cfg.playerNumber = (p.playerNumber <= 99) ? p.playerNumber : 0;
+        cfg.height       = (p.height > 0.5f && p.height < 2.5f) ? p.height : 1.80f;
+
+        if (playerRigs_[i].loadModular(cfg)) {
+            playerRigs_[i].loadedCfg_ = cfg;
+            playerRigs_[i].hasLoadedCfg_ = true;
+        } else {
+            LOGE("[LOADING] failed to preload rig %d", i);
+        }
+    }
+    // Preload officials (indices 22-24)
+    for (int i = 22; i < 25; ++i) {
+        if (!playerRigs_[i].nodes.empty()) continue;
+        AvatarConfig cfg;
+        cfg.bodyType = 1; cfg.height = 1.80f;
+        if (playerRigs_[i].loadModular(cfg)) {
+            playerRigs_[i].loadedCfg_ = cfg;
+            playerRigs_[i].hasLoadedCfg_ = true;
+        }
+    }
+    LOGI("[LOADING] player rigs preloaded");
+}
+
 void ARRenderer::drawCameraBackground(ARManager& ar) {
     if (ar.getCameraTextureId() == 0) return;
     glDisable(GL_DEPTH_TEST);
@@ -2014,6 +2097,8 @@ void ARRenderer::resizeSceneFbo(int screenW, int screenH) {
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         LOGE("Scene FBO incomplete: 0x%x (%dx%d)", status, w, h);
+    } else {
+        LOGI("[FBO] Scene FBO complete: %dx%d", w, h);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     sceneRenderW_ = w;
@@ -2027,7 +2112,8 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
                                const float* playerRotY,
                                const uint8_t* playerFlags, const uint8_t* playerTeams,
                                const uint8_t* playerRoles,
-                               TouchController* ctrl, int screenW, int screenH) {
+                               TouchController* ctrl, int screenW, int screenH,
+                               const uint16_t* playerAnimProgress) {
     bool tracked = ar.isMarkerTracked();
     ARPose anchorPose = ar.getMarkerAnchorPose();
 
@@ -2077,6 +2163,16 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
         scene_.update();
     }
 
+    static int sceneLogCounter = 0;
+    if (ballPosition && (sceneLogCounter++ % 120) == 0) {
+        const float scaleX = pitchHalf_[0] * 0.1f;
+        const float scaleZ = pitchHalf_[1] * 0.1f;
+        LOGI("[SCENE_POS] ball=(%.2f,%.2f,%.2f) p0=(%.2f,%.2f) p6=(%.2f,%.2f)",
+             ballPosition[0] * scaleX, ballPosition[2] * 0.1f + 0.05f, -ballPosition[1] * scaleZ,
+             playerPositions[0] * scaleX, playerPositions[2] * scaleZ,
+             playerPositions[6*3+0] * scaleX, playerPositions[6*3+2] * scaleZ);
+    }
+
     // ─── Shadow pass ──────────────────────────────────────────────
     // Build light-space matrix from sun direction (matches shader sunDir L1 = vec3(0.35, 0.85, 0.45))
     float lightView[16], lightProj[16];
@@ -2121,7 +2217,8 @@ void ARRenderer::renderScene(ARManager& ar, const float* playerPositions, int nu
 
     renderStaticObjects(vpa, lightSpaceMatrix_);
     renderPlayers(vpa, lightSpaceMatrix_, playerPositions, numPlayers,
-                  playerAnims, playerVels, playerRotY, playerFlags, playerTeams, playerRoles);
+                  playerAnims, playerVels, playerRotY, playerFlags, playerTeams, playerRoles,
+                  playerAnimProgress);
 
     // Restore default framebuffer and native viewport
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
@@ -2185,9 +2282,21 @@ void ARRenderer::renderStaticObjects(const float* viewProj, const float* lightSp
     (void)timeLoc; (void)lightSpaceLoc; (void)shadowMapLoc; (void)fogDensityLoc;
     (void)staticAdboardLocs_;
 
+    if (staticShader_ == 0) {
+        LOGE("[RENDER_STATIC] staticShader_ is 0 — shader failed to compile!");
+        return;
+    }
+    int renderedNodes = 0;
+    int pitchVisible = 0;
+    int pitchHasMesh = 0;
     for (auto& node : scene_.nodes) {
         if (node.useSkinning || !node.visible) continue;
         if (!node.staticMesh.hasData()) continue;
+        renderedNodes++;
+        if (node.name == "pitch") {
+            pitchVisible = 1;
+            pitchHasMesh = 1;
+        }
 
         float mvp[16];
         mat4Mul(viewProj, node.worldMatrix, mvp);
@@ -2250,6 +2359,12 @@ void ARRenderer::renderStaticObjects(const float* viewProj, const float* lightSp
         glActiveTexture(GL_TEXTURE0);
     }
 
+    static int staticLogCounter = 0;
+    if ((staticLogCounter++ % 120) == 0) {
+        LOGI("[RENDER_STATIC] nodes=%d pitchVisible=%d pitchHasMesh=%d",
+             renderedNodes, pitchVisible, pitchHasMesh);
+    }
+
     glDisable(GL_BLEND);
 }
 
@@ -2258,7 +2373,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                                const uint8_t* playerAnims, const float* playerVels,
                                const float* playerRotY,
                                const uint8_t* playerFlags, const uint8_t* playerTeams,
-                               const uint8_t* playerRoles) {
+                               const uint8_t* playerRoles,
+                               const uint16_t* playerAnimProgress) {
     // Check if at least one rig is loaded
     bool anyRigLoaded = false;
     for (int r = 0; r < 25; ++r) {
@@ -2329,9 +2445,8 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
     // Map to 3D scene units derived from the ACTUAL pitch GLB.
     const float scaleX  = pitchHalf_[0] * 0.1f;
     const float scaleZ  = pitchHalf_[1] * 0.1f;
-    const float pitchScale = 1.0f; // player size independent of pitch length
+    const float kWorldScale = 0.1f; // 1m = 0.1u
 
-    static int loadCooldown[25] = {};
     for (int i = 0; i < numPlayers; ++i) {
         // --- Exploit server flags ---
         uint8_t flags = playerFlags ? playerFlags[i] : 0xFF;
@@ -2341,26 +2456,46 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
         float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
         float gh = playerPositions[i * 3 + 2];
-        float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, -gw * scaleZ };
+
+        // Build modular avatar config from MatchSetup packet
+        AvatarConfig cfg;
+        cfg.bodyType = 1; cfg.hairStyle = 0; cfg.beardStyle = 0;
+        cfg.skinColor = 3; cfg.hairColor = 0; cfg.playerNumber = 0; cfg.height = 1.80f;
+        if (hasSetup_ && i < 22) {
+            const auto& p = setup_.players[i];
+            cfg.bodyType     = (p.bodyType < 4)    ? p.bodyType    : 1;
+            cfg.hairStyle    = (p.hairStyle < 6)   ? p.hairStyle   : 0;
+            cfg.beardStyle   = (p.beardStyle < 4)  ? p.beardStyle  : 0;
+            cfg.skinColor    = (p.skinColor < 7)   ? p.skinColor   : 3;
+            cfg.hairColor    = (p.hairColor < 8)   ? p.hairColor   : 0;
+            cfg.playerNumber = (p.playerNumber <= 99) ? p.playerNumber : 0;
+            cfg.height       = (p.height > 0.5f && p.height < 2.5f) ? p.height : 1.80f;
+        }
+
+        // Use player's own rig if loaded, otherwise fall back to rig 0
+        PlayerRig* rig = &playerRigs_[i];
+        if (rig->nodes.empty()) rig = &playerRigs_[0];
+
+        // Feet at y=0: offset = -minY * heightScale * worldScale
+        float heightScale = cfg.height / 1.80f;
+        float yOffset = -rig->minY_ * heightScale * kWorldScale;
+        float worldPos[3] = { gx * scaleX, gh * kWorldScale + yOffset, -gw * scaleZ };
 
         // Heading: GF Y maps to -OpenGL Z, so server direction Y is negated before atan2
-        // playerVels[i*3+0..1] = unit direction vector (from server dir[])
-        // playerVels[i*3+2]    = scalar speed (from server vel magnitude)
         float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
         float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
         float rotY = playerRotY ? playerRotY[i] : std::atan2(dirX, dirY);
 
-        // Animation state for this player — USE EXACTLY what GF sends, no remapping
+        // Animation state for this player
         uint8_t rawAnim = playerAnims ? playerAnims[i] : 0;
         uint8_t desiredAnim = rawAnim;
         float speed = playerVels ? playerVels[i * 3 + 2] : 0.0f;
         uint8_t role = playerRoles ? playerRoles[i] : 0;
         desiredAnim = sanitizePlayerAnim(desiredAnim, speed, role);
 
-        // NO remapping — GF anim is the ground truth
-        (void)flags; // flags still available if needed later
-
-        if (playerAnims_[i].current != desiredAnim) {
+        if (playerAnimProgress && playerAnims_[i].current != desiredAnim) {
+            playerAnims_[i].playWithProgress(desiredAnim, playerAnimProgress[i]);
+        } else if (playerAnims_[i].current != desiredAnim) {
             playerAnims_[i].play(desiredAnim);
         }
         playerAnims_[i].update(0.016f);
@@ -2368,13 +2503,11 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
         // --- Directional Animation Selection ---
         // DISABLED: directional clips are compiled from GF .anim files but the
         // bone rotation/position data does not map correctly to the GLB skeleton.
-        // Using embedded GLB animations only until the directional bank is verified.
         constexpr bool kUseExternalDirAnims = false;
         const DirAnimClip* dirClip = nullptr;
         float relAngleDeg = 0.0f;
         (void)relAngleDeg;
         if (kUseExternalDirAnims && !dirAnimBank_.empty()) {
-            // moveAngle must be in same space as server rotY (atan2(dirX, dirY))
             float moveAngle = std::atan2(dirX, dirY);
             float relAngle = rotY - moveAngle;
             relAngle = std::fmod(std::abs(relAngle), 2.0f * 3.14159265f);
@@ -2384,10 +2517,10 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
             DirectionalAnimBank::Query q;
             q.category = playerAnims_[i].current;
             q.relAngleDeg = relAngleDeg;
-            if (speed < 0.0005f) q.velocityIn = 0; // idle
-            else if (speed < 0.008f) q.velocityIn = 1; // walk
-            else if (speed < 0.05f) q.velocityIn = 2; // run/dribble
-            else q.velocityIn = 3; // sprint
+            if (speed < 0.0005f) q.velocityIn = 0;
+            else if (speed < 0.008f) q.velocityIn = 1;
+            else if (speed < 0.05f) q.velocityIn = 2;
+            else q.velocityIn = 3;
 
             dirClip = dirAnimBank_.select(q);
         }
@@ -2404,20 +2537,16 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                 teamColor[1] = setup_.teamBColor1[1] / 255.0f;
                 teamColor[2] = setup_.teamBColor1[2] / 255.0f;
             } else if (playerTeams[i] == 2) {
-                // Officials: neon yellow/green
                 teamColor[0] = 0.85f; teamColor[1] = 0.85f; teamColor[2] = 0.02f;
             }
         } else if (playerTeams) {
             if (playerTeams[i] == 1) {
-                // Team B: deep red
                 teamColor[0] = 0.80f; teamColor[1] = 0.05f; teamColor[2] = 0.05f;
             } else if (playerTeams[i] == 2) {
-                // Officials: neon yellow/green
                 teamColor[0] = 0.85f; teamColor[1] = 0.85f; teamColor[2] = 0.02f;
             }
         } else {
             if (i >= 11) {
-                // Fallback team B
                 teamColor[0] = 0.80f; teamColor[1] = 0.05f; teamColor[2] = 0.05f;
             }
         }
@@ -2434,47 +2563,6 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
             teamColor[1] = std::min(teamColor[1] + 0.15f, 1.0f);
         }
 
-        // GF server normalization constants (X_FIELD_SCALE=54.4, Y_FIELD_SCALE=-83.6, Z_FIELD_SCALE=1)
-        float gfMetersX = gx * 54.4f;
-        float gfMetersY = gw * (-83.6f);
-        float gfMetersZ = gh * 1.0f;
-
-        // Logging removed to prevent ANR caused by logd saturation.
-        // (void)gfMetersX; (void)gfMetersY; (void)gfMetersZ;
-
-        // Build modular avatar config from MatchSetup packet
-        AvatarConfig cfg;
-        cfg.bodyType = 1; cfg.hairStyle = 0; cfg.beardStyle = 0;
-        cfg.skinColor = 3; cfg.hairColor = 0; cfg.playerNumber = 0; cfg.height = 1.0f;
-        if (hasSetup_ && i < 22) {
-            const auto& p = setup_.players[i];
-            cfg.bodyType     = (p.bodyType < 4)    ? p.bodyType    : 1;
-            cfg.hairStyle    = (p.hairStyle < 6)   ? p.hairStyle   : 0;
-            cfg.beardStyle   = (p.beardStyle < 4)  ? p.beardStyle  : 0;
-            cfg.skinColor    = (p.skinColor < 7)   ? p.skinColor   : 3;
-            cfg.hairColor    = (p.hairColor < 8)   ? p.hairColor   : 0;
-            cfg.playerNumber = (p.playerNumber <= 99) ? p.playerNumber : 0;
-            cfg.height       = (p.height > 0.5f && p.height < 2.5f) ? p.height : 1.0f;
-        }
-
-        // Lazy-load modular avatar per player index, or reload if config changed.
-        // Cooldown prevents infinite retry loops if the asset is missing/broken.
-        bool needsLoad = playerRigs_[i].nodes.empty() || !playerRigs_[i].configMatches(cfg);
-        if (needsLoad && loadCooldown[i] <= 0) {
-            if (!playerRigs_[i].loadModular(cfg)) {
-                loadCooldown[i] = 300; // ~5s retry backoff
-            } else {
-                playerRigs_[i].loadedCfg_ = cfg;
-                playerRigs_[i].hasLoadedCfg_ = true;
-            }
-        } else if (loadCooldown[i] > 0) {
-            loadCooldown[i]--;
-        }
-
-        // Use player's own rig if loaded, otherwise fall back to rig 0
-        PlayerRig* rig = &playerRigs_[i];
-        if (rig->nodes.empty()) rig = &playerRigs_[0];
-
         uint8_t pTeam = playerTeams ? playerTeams[i] : (i < 11 ? 0 : 1);
         GLuint playerKitTex = (pTeam < 2) ? teamKitTex_[pTeam] : 0;
         GLuint playerShortTex = (pTeam < 2) ? teamShortTex_[pTeam] : 0;
@@ -2485,7 +2573,7 @@ void ARRenderer::renderPlayers(const float* viewProj, const float* lightSpaceMat
                   playerKitTex, playerShortTex,
                   i, dirClip, &cfg,
                   lightSpaceMatrix_, shadowColorTex_,
-                  1.0f); // player size independent of pitch length
+                  1.0f);
 
         (void)cfg; (void)playerKitTex;
     }
@@ -2535,7 +2623,7 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
     if (playerPositions) {
         const float scaleX  = pitchHalf_[0] * 0.1f;
         const float scaleZ  = pitchHalf_[1] * 0.1f;
-        const float pitchScale = 1.0f; // player size independent of pitch length
+        const float kWorldScale = 0.1f;
         float teamColor[3] = {0.0f, 0.0f, 0.0f};
 
         for (int i = 0; i < numPlayers; ++i) {
@@ -2545,15 +2633,17 @@ void ARRenderer::renderShadowMap(const float* playerPositions, int numPlayers,
             float gx = clampFloat(playerPositions[i * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[i * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[i * 3 + 2];
-            float worldPos[3] = { gx * scaleX, gh * 0.1f * pitchScale + 0.14f * pitchScale, -gw * scaleZ };
-
-            float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
-            float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
-            float rotY = playerRotY ? playerRotY[i] : std::atan2(dirX, dirY);
 
             PlayerRig* rig = &playerRigs_[i];
             if (rig->nodes.empty()) rig = &playerRigs_[0];
             if (rig->nodes.empty()) continue;
+
+            float yOffset = -rig->minY_ * kWorldScale; // heightScale=1.0f (no AvatarConfig in shadow pass)
+            float worldPos[3] = { gx * scaleX, gh * kWorldScale + yOffset, -gw * scaleZ };
+
+            float dirX = playerVels ? playerVels[i * 3 + 0] : 0.0f;
+            float dirY = playerVels ? playerVels[i * 3 + 1] : 1.0f;
+            float rotY = playerRotY ? playerRotY[i] : std::atan2(dirX, dirY);
 
             rig->draw(lightSpaceMatrix_, worldPos, rotY,
                       playerAnims_[i].current, playerAnims_[i].previous, playerAnims_[i].blend,
@@ -2754,12 +2844,12 @@ void ARRenderer::renderUI(TouchController& ctrl, int screenW, int screenH,
             // Convert GF env coords to world coords (same as renderPlayers)
             const float scaleX  = pitchHalf_[0] * 0.1f;
             const float scaleZ  = pitchHalf_[1] * 0.1f;
-            const float pitchScale = 1.0f; // player size independent of pitch length
+            const float kWorldScale = 0.1f;
             float gx = clampFloat(playerPositions[activeIdx * 3 + 0], -1.05f, 1.05f);
             float gw = clampFloat(playerPositions[activeIdx * 3 + 1], -0.50f, 0.50f);
             float gh = playerPositions[activeIdx * 3 + 2];
             float wx = gx * scaleX;
-            float wy = gh * 0.1f * pitchScale + 0.14f * pitchScale;
+            float wy = gh * kWorldScale;
             float wz = -gw * scaleZ;
             // Project world position to screen
             float clip[4];

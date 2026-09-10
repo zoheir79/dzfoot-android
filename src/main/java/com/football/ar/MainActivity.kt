@@ -1,6 +1,5 @@
 package com.football.ar
 
-import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -10,31 +9,51 @@ import android.os.VibrationEffect
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
-import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import com.google.ar.core.ArCoreApk
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 
-class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
+class MainActivity : AppCompatActivity() {
 
-    private lateinit var glView: GLSurfaceView
+    lateinit var godotAdapter: GodotAdapter
+    private var godotView: View? = null
     val jni = JniBridge()
     private lateinit var lkManager: LiveKitManager
     val audioSystem = AudioSystem()
 
     private var latestGameState = ByteArray(0)
-    private val viewMatrix   = FloatArray(16)
-    private val projMatrix   = FloatArray(16)
-    private val anchorMatrix = FloatArray(16)
 
     private lateinit var scoreText: TextView
     private lateinit var timerText: TextView
     private lateinit var eventText: TextView
+    private lateinit var loadingContainer: FrameLayout
+    private lateinit var loadingProgressBar: android.widget.ProgressBar
+    private lateinit var loadingStatusText: TextView
+    private val loadingHandler = Handler(Looper.getMainLooper())
+    private val loadingRunnable = object : Runnable {
+        override fun run() {
+            updateLoadingOverlay()
+            if (loadingContainer.visibility == View.VISIBLE) {
+                loadingHandler.postDelayed(this, 100)
+            }
+        }
+    }
+    private var loadingStartTime = 0L
+    private val LOADING_TIMEOUT_MS = 45000L
+    private val GAMESTATE_TIMEOUT_MS = 12000L
+    private var retryCount = 0
+    private val MAX_RETRIES = 3
+    private var firstGameStateReceived = false
+    private var firstSetupReceived = false
+
+    // Retry state for the current connection
+    private var lastLkUrl: String? = null
+    private var lastToken: String? = null
+    private var lastRoomId: String? = null
+    private var lastMode: String? = null
+    private var lastForceMcoVsMca: Boolean = false
+    private var retryDialogShown = false
 
     // Dynamic crowd volume (FIFA-style reactive audio)
     private var crowdVolumeCurrent = 0.3f
@@ -80,28 +99,13 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
 
-        // Initialize JNI and AssetManager immediately before GLSurfaceView starts rendering
-        val initOk = jni.nativeInit(this, assets, isEmulator())
-        val marker = jni.nativeGetBuildMarker()
-        Toast.makeText(this, "Native: $marker", Toast.LENGTH_LONG).show()
-
-        glView = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(3)
-            // Request 4x MSAA + 24-bit depth + 8-bit stencil for quality rendering.
-            // Falls back gracefully if GPU doesn't support MSAA.
-            setEGLConfigChooser(8, 8, 8, 8, 24, 8)
-            setRenderer(this@MainActivity)
-            isClickable = true
-            isFocusableInTouchMode = true
-            requestFocus()
-            setOnTouchListener { _, event ->
-                this@MainActivity.onTouchEvent(event)
-                true
-            }
-        }
+        // Initialize Godot engine as the 3D renderer
+        godotAdapter = GodotAdapter(this)
+        godotView = godotAdapter.initialize()
+        Toast.makeText(this, "Godot engine initialized", Toast.LENGTH_LONG).show()
 
         audioSystem.init()
-        Thread { loadSounds() }.start() // background thread: disk I/O from assets must not block UI
+        Thread { loadSounds() }.start()
         crowdHandler.post(crowdRunnable)
 
         scoreText = TextView(this).apply {
@@ -120,8 +124,36 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             text = ""
         }
 
+        loadingContainer = FrameLayout(this).apply {
+            setBackgroundColor(0xFF000000.toInt())
+            visibility = View.VISIBLE
+        }
+        loadingProgressBar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = false
+            max = 100
+            progress = 0
+        }
+        loadingStatusText = TextView(this).apply {
+            textSize = 18f
+            setTextColor(0xFFFFFFFF.toInt())
+            text = "Initialisation..."
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+        }
+        loadingContainer.addView(loadingProgressBar, FrameLayout.LayoutParams(600, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+            gravity = android.view.Gravity.CENTER
+        })
+        loadingContainer.addView(loadingStatusText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.CENTER
+            topMargin = 80
+        })
+
         val root = FrameLayout(this).apply {
-            addView(glView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            if (godotView != null) {
+                addView(godotView, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            }
 
             // Score overlay (top center)
             addView(scoreText, FrameLayout.LayoutParams(
@@ -150,10 +182,15 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 gravity = android.view.Gravity.CENTER
             })
 
-            // On-screen controls are now rendered natively via OpenGL (TouchController)
-            // The old Android Button layout has been removed to avoid overlap.
+            // Loading overlay (covers whole screen until renderer + first game state)
+            addView(loadingContainer, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+
+            // On-screen controls are rendered by Godot (touch input via GDScript)
         }
         setContentView(root)
+
+        loadingStartTime = System.currentTimeMillis()
+        loadingHandler.post(loadingRunnable)
 
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 123)
@@ -171,11 +208,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
         if (mode != null && roomId != null && token != null && lkUrl != null) {
             // Launched from menu with all parameters — connect directly
-            checkArCoreAndInit(forceClassic = forceClassic)
             connectToLiveKit(lkUrl, token, roomId, mode)
         } else if (mode != null) {
             // Single-player modes that need match creation
-            checkArCoreAndInit(forceClassic = forceClassic)
             when (mode) {
                 "ai_vs_ai" -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = forceMcoVsMca)
                 "vs_ai", "ar" -> createMatchAndConnect(mode = if (mode == "ar") "vs_ai" else mode, forceMcoVsMca = false)
@@ -187,7 +222,14 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
     }
 
-    private fun connectToLiveKit(lkUrl: String, token: String, roomId: String, mode: String) {
+    private fun connectToLiveKit(lkUrl: String, token: String, roomId: String, mode: String, forceMcoVsMca: Boolean = false) {
+        lastLkUrl = lkUrl
+        lastToken = token
+        lastRoomId = roomId
+        lastMode = mode
+        lastForceMcoVsMca = forceMcoVsMca
+        retryCount = 0
+        retryDialogShown = false
         lkManager = LiveKitManager(this)
         lkManager.connect(lkUrl, token)
         startInputLoop()
@@ -205,26 +247,11 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             .setTitle("Sélection du Mode de Jeu")
             .setItems(modes) { _, which ->
                 when (which) {
-                    0 -> {
-                        checkArCoreAndInit(forceClassic = false)
-                        createMatchAndConnect(mode = "vs_ai")
-                    }
-                    1 -> {
-                        checkArCoreAndInit(forceClassic = true)
-                        createMatchAndConnect(mode = "vs_ai")
-                    }
-                    2 -> {
-                        checkArCoreAndInit(forceClassic = true)
-                        createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = true)
-                    }
-                    3 -> {
-                        checkArCoreAndInit(forceClassic = true)
-                        createMatchPvP()
-                    }
-                    4 -> {
-                        checkArCoreAndInit(forceClassic = true)
-                        joinMatch()
-                    }
+                    0 -> createMatchAndConnect(mode = "vs_ai")
+                    1 -> createMatchAndConnect(mode = "vs_ai")
+                    2 -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = true)
+                    3 -> createMatchPvP()
+                    4 -> joinMatch()
                 }
             }
             .setCancelable(false)
@@ -328,9 +355,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 /* match created */
 
                 runOnUiThread {
-                    lkManager = LiveKitManager(this)
-                    lkManager.connect(lkUrl, token)
-                    startInputLoop()
+                    connectToLiveKit(lkUrl, token, roomId, mode, forceMcoVsMca)
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to create match: ${e.message}")
@@ -403,9 +428,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 val status = json.optString("status", "running")
 
                 runOnUiThread {
-                    lkManager = LiveKitManager(this)
-                    lkManager.connect(lkUrl, token)
-                    startInputLoop()
+                    connectToLiveKit(lkUrl, token, roomId, "1v1")
                     if (status == "waiting") {
                         /* PvP waiting */
                         android.widget.Toast.makeText(this, "Match créé ! En attente d'un adversaire...", android.widget.Toast.LENGTH_LONG).show()
@@ -515,9 +538,7 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
                 val token = json.getString("token")
 
                 runOnUiThread {
-                    lkManager = LiveKitManager(this)
-                    lkManager.connect(lkUrl, token)
-                    startInputLoop()
+                    connectToLiveKit(lkUrl, token, roomId, "1v1")
                     /* joined PvP */
                     android.widget.Toast.makeText(this, "Match rejoint !", android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -530,51 +551,6 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }.start()
     }
 
-    private var userRequestedInstall = false
-
-    private fun isEmulator(): Boolean {
-        return (Build.FINGERPRINT.contains("generic") ||
-                Build.FINGERPRINT.startsWith("google/sdk_gphone") ||
-                Build.MODEL.contains("Emulator") ||
-                Build.MODEL.contains("sdk_gphone") ||
-                Build.MANUFACTURER.contains("Google") && Build.BRAND.contains("generic"))
-    }
-
-    private fun checkArCoreAndInit(forceClassic: Boolean) {
-        if (forceClassic) {
-            jni.nativeInit(this, assets, isEmulator = true)
-            return
-        }
-
-        val availability = ArCoreApk.getInstance().checkAvailability(this)
-        if (availability.isTransient) {
-            Handler(Looper.getMainLooper()).postDelayed({ checkArCoreAndInit(forceClassic) }, 200)
-            return
-        }
-
-        if (availability.isSupported) {
-            try {
-                when (ArCoreApk.getInstance().requestInstall(this, !userRequestedInstall)) {
-                    ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
-                        userRequestedInstall = true
-                        return
-                    }
-                    ArCoreApk.InstallStatus.INSTALLED -> {}
-                }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "ARCore install request failed: ${e.message}")
-            }
-            try {
-                jni.nativeInit(this, assets, isEmulator = false)
-            } catch (e: Exception) {
-                Log.e("MainActivity", "ARCore native init failed: ${e.message} - using fallback")
-                jni.nativeInit(this, assets, isEmulator = true)
-            }
-        } else {
-            jni.nativeInit(this, assets, isEmulator = true)
-        }
-    }
-
     private var sendInputLogCount = 0
     private val lastSendInputMsLock = Object()
     private var lastSendInputMs = 0L
@@ -583,12 +559,12 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private fun sendInput(force: Boolean = false, fromExecutor: Boolean = false) {
         val now = System.currentTimeMillis()
         synchronized(lastSendInputMsLock) {
-            if (!force && now - lastSendInputMs < 50) return // throttle continuous sends to ~20 Hz
+            if (!force && now - lastSendInputMs < 50) return
             lastSendInputMs = now
         }
         if (::lkManager.isInitialized) {
-            val inputBytes = jni.nativeGetInputBytes()
-            if (inputBytes.isNotEmpty()) {
+            val inputBytes = godotAdapter.getPlayerInput()
+            if (inputBytes != null && inputBytes.isNotEmpty()) {
                 // Parse PlayerInputPacket (36 bytes) to log real values
                 if (inputBytes.size >= 28) {
                     val buf = java.nio.ByteBuffer.wrap(inputBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -610,22 +586,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         event ?: return false
-        val action = event.actionMasked
-        if (action == MotionEvent.ACTION_MOVE) {
-            for (i in 0 until event.pointerCount) {
-                val pointerId = event.getPointerId(i)
-                val x = event.getX(i)
-                val y = event.getY(i)
-                jni.nativeOnTouch(x, y, action, pointerId)
-            }
-        } else {
-            val pointerIdx = event.actionIndex
-            val pointerId = event.getPointerId(pointerIdx)
-            val x = event.getX(pointerIdx)
-            val y = event.getY(pointerIdx)
-            Log.i("DZ_TOUCH", "TOUCH_EV action=$action x=$x y=$y pid=$pointerId")
-            jni.nativeOnTouch(x, y, action, pointerId)
-        }
+        // Touch input is now handled by Godot's input system (InputEventScreenTouch / InputEventScreenDrag)
+        // Godot's GodotRenderView intercepts touch events natively.
+        // We still trigger input send on touch events for immediate response.
         sendInput(force = true)
         return true
     }
@@ -634,6 +597,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         synchronized(this) {
             latestGameState = data.copyOf()
         }
+        // Forward to Godot for 3D rendering
+        godotAdapter.sendGameState(data)
         if (data.size < 1256) {
             Log.w("DZ_STATE", "ANDROID_IN GameState incomplete: ${data.size} bytes (expected 1256)")
             return
@@ -665,52 +630,153 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val camRot3 = bb.getFloat(1248)
         val camFov = bb.getFloat(1252)
         Log.i("DZ_STATE", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        firstGameStateReceived = true
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
             timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
+            updateLoadingOverlay()
         }
     }
 
-    override fun onDrawFrame(gl: GL10?) {
-        val stateCopy = synchronized(this) {
-            latestGameState.copyOf()
+    private fun updateLoadingOverlay() {
+        if (!::loadingContainer.isInitialized) return
+        // Godot is ready when the adapter reports it's initialized
+        val ready = godotAdapter.isReady()
+        val progress = if (ready) 100 else 50
+        val state = if (ready) 0 else 0
+        val elapsed = System.currentTimeMillis() - loadingStartTime
+
+        val text = when {
+            state == 7 -> "Échec du chargement moteur"
+            !ready && elapsed < 5000 -> "Initialisation du moteur..."
+            !ready && elapsed < 10000 -> "Compilation des shaders..."
+            !ready && elapsed < 15000 -> "Chargement des textures..."
+            !ready -> "Chargement des animations..."
+            !firstSetupReceived -> "En attente des données du match..."
+            !firstGameStateReceived -> "En attente du premier état de jeu..."
+            else -> "Prêt"
         }
-        jni.nativeOnFrame(viewMatrix, projMatrix, anchorMatrix, stateCopy)
+        loadingProgressBar.progress = progress
+        loadingStatusText.text = text
+
+        if (state == 7) {
+            if (!retryDialogShown) {
+                retryDialogShown = true
+                showRetryDialog("Le moteur de rendu n'a pas pu s'initialiser.")
+            }
+            return
+        }
+
+        // Demo mode timeout: if Godot is ready but no match data arrives, switch to demo
+        if (ready && elapsed > GAMESTATE_TIMEOUT_MS && !firstSetupReceived && !retryDialogShown) {
+            Log.w("DZ_LOADING", "Timeout waiting for match setup after ${elapsed}ms — switching to demo mode")
+            firstSetupReceived = true
+            firstGameStateReceived = true
+            loadingStatusText.text = "Mode démo (aucun serveur)"
+            loadingProgressBar.progress = 100
+            loadingHandler.postDelayed({
+                if (loadingContainer.visibility == View.VISIBLE) {
+                    Log.i("DZ_LOADING", "Hiding loading overlay in demo mode after ${elapsed}ms")
+                    loadingContainer.visibility = View.GONE
+                }
+            }, 1500)
+            return
+        }
+
+        // Hard timeout: if loading overlay is still visible after 25s, hide it regardless
+        if (elapsed > 25000L && loadingContainer.visibility == View.VISIBLE) {
+            Log.w("DZ_LOADING", "Hard timeout — hiding loading overlay after ${elapsed}ms (godotReady=$ready)")
+            firstSetupReceived = true
+            firstGameStateReceived = true
+            loadingContainer.visibility = View.GONE
+            return
+        }
+
+        if (ready && firstSetupReceived && firstGameStateReceived && loadingContainer.visibility == View.VISIBLE) {
+            Log.i("DZ_LOADING", "Hiding loading overlay after ${elapsed}ms")
+            loadingContainer.visibility = View.GONE
+        }
     }
 
-    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        jni.nativeSurfaceCreated()
+    private fun showRetryDialog(message: String) {
+        runOnUiThread {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Chargement")
+                .setMessage(message)
+                .setCancelable(false)
+                .setPositiveButton("Réessayer") { _, _ ->
+                    retryCount = 0
+                    retryLastConnection()
+                }
+                .setNegativeButton("Quitter") { _, _ -> finishAffinity() }
+                .show()
+        }
     }
 
-    override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
-        @Suppress("DEPRECATION")
-        val rotation = windowManager.defaultDisplay.rotation
-        jni.nativeDisplayChanged(rotation, w, h)
+    private fun retryLastConnection() {
+        if (retryCount >= MAX_RETRIES) {
+            showRetryDialog("Trop de tentatives. Vérifiez votre connexion.")
+            return
+        }
+        retryCount++
+        retryDialogShown = false
+        loadingStartTime = System.currentTimeMillis()
+        firstGameStateReceived = false
+        firstSetupReceived = false
+        loadingContainer.visibility = View.VISIBLE
+        loadingHandler.post(loadingRunnable)
+        Log.i("DZ_LOADING", "Retry ${retryCount}/$MAX_RETRIES")
+
+        val lkUrl = lastLkUrl
+        val token = lastToken
+        if (lkUrl != null && token != null) {
+            if (::lkManager.isInitialized) {
+                lkManager.disconnect()
+            }
+            lkManager = LiveKitManager(this)
+            lkManager.connect(lkUrl, token)
+            startInputLoop()
+        } else {
+            // No stored connection params: recreate match from mode
+            when (lastMode) {
+                "ai_vs_ai" -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = lastForceMcoVsMca)
+                "vs_ai", "ar" -> createMatchAndConnect(mode = "vs_ai", forceMcoVsMca = false)
+                else -> showModeSelectionDialogFallback()
+            }
+        }
+    }
+
+    fun onMatchSetupReceived(data: ByteArray) {
+        if (!firstSetupReceived) {
+            firstSetupReceived = true
+            Log.i("DZ_LOADING", "Match setup received, ${data.size} bytes")
+            runOnUiThread { updateLoadingOverlay() }
+        }
+        godotAdapter.sendMatchSetup(data)
     }
 
     override fun onResume() {
         super.onResume()
-        glView.onResume()
-        jni.nativeResume(this)
+        godotAdapter.onResume()
         audioSystem.init()
         Thread { loadSounds() }.start()
     }
 
     override fun onPause() {
         super.onPause()
-        glView.onPause()
-        jni.nativePause()
+        godotAdapter.onPause()
         audioSystem.destroy()
         synchronized(soundsLock) { soundsLoaded = false }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        loadingHandler.removeCallbacksAndMessages(null)
         stopInputLoop()
         if (::lkManager.isInitialized) {
             lkManager.disconnect()
         }
-        jni.nativeDestroy()
+        godotAdapter.destroy()
     }
 
     // Called from C++ via JNI (AudioManager bridge)

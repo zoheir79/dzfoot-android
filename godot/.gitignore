@@ -1,0 +1,15 @@
+# Godot build artifacts
+/godot-cpp/
+/bin/
+/.godot/
+*.so
+*.dll
+
+# Keep the project.godot and source files
+!/project.godot
+!/scenes/
+!/scripts/
+!/addons/
+!/src/
+!/SConstruct
+!/icon.svg

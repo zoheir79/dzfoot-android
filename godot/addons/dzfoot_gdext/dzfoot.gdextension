@@ -1,0 +1,15 @@
+; Engine configuration file for DZFoot GDExtension
+[gd_resource type="GDExtension" format=3]
+
+[configuration]
+entry_symbol="dzfoot_gdext_entry"
+compatibility_minimum=4.2
+compatibility_maximum=4.5
+
+[libraries]
+linux.debug.x86_64="res://bin/libdzfoot_gdext.linux.debug.x86_64.so"
+linux.release.x86_64="res://bin/libdzfoot_gdext.linux.release.x86_64.so"
+windows.debug.x86_64="res://bin/libdzfoot_gdext.windows.debug.x86_64.dll"
+windows.release.x86_64="res://bin/libdzfoot_gdext.windows.release.x86_64.dll"
+android.debug.arm64="res://bin/libdzfoot_gdext.android.debug.arm64.so"
+android.release.arm64="res://bin/libdzfoot_gdext.android.release.arm64.so"

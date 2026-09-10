@@ -213,32 +213,74 @@ void ARManager::getViewMatrix(float* out) const {
         return;
     }
 
-    // 2. Exact GF camera via quaternion (position + rotation)
-    if (hasServerCamera_ && hasServerCameraRot_) {
-        // GF uses Z-up (X=length, Y=width, Z=height).
-        // OpenGL uses Y-up (X=length, Y=height, Z=width).
-        // Right-handed basis change: (X,Y,Z)_gf -> (X,Z,-Y)_ogl.
-        // For a quaternion q=(x,y,z,w), the converted quaternion is q_ogl=(x,-z,-y,w).
-        float qOgl[4] = { serverCamRot_[0], -serverCamRot_[2], -serverCamRot_[1], serverCamRot_[3] };
-        float rot[16];
-        Transform::quatToMat4(qOgl, rot);
-        // View matrix = transpose (inverse of orthonormal rotation)
-        out[0] = rot[0];   out[4] = rot[1];   out[8]  = rot[2];   out[12] = -(rot[0]*serverCamX_ + rot[1]*serverCamY_ + rot[2]*serverCamZ_);
-        out[1] = rot[4];   out[5] = rot[5];   out[9]  = rot[6];   out[13] = -(rot[4]*serverCamX_ + rot[5]*serverCamY_ + rot[6]*serverCamZ_);
-        out[2] = rot[8];   out[6] = rot[9];   out[10] = rot[10];  out[14] = -(rot[8]*serverCamX_ + rot[9]*serverCamY_ + rot[10]*serverCamZ_);
-        out[3] = 0;        out[7] = 0;        out[11] = 0;        out[15] = 1;
+    // 2. Server camera (only when explicitly in AR mode but ARCore is unavailable)
+    // Use the server-provided quaternion to build a proper view matrix.
+    // GF sends a Z-up quaternion; convert to Y-up via (qx, qz, -qy, qw).
+    if (camMode_ == CameraMode::AR && hasServerCamera_) {
+        if (hasServerCameraRot_) {
+            // Convert GF Z-up quaternion to OpenGL Y-up
+            float qx = serverCamRot_[0];
+            float qy = serverCamRot_[1];
+            float qz = serverCamRot_[2];
+            float qw = serverCamRot_[3];
+            // Z-up → Y-up: swap Y and Z, negate new Z
+            float qyx = qx;
+            float qyy = qz;
+            float qyz = -qy;
+            float qyw = qw;
 
-        static int gfCamLogCounter = 0;
-        if ((gfCamLogCounter++ % 120) == 0) {
-            LOGI("[GF_CAM] pos=(%.2f,%.2f,%.2f) fov=%.1f->%.1f rot=(%.3f,%.3f,%.3f,%.3f)",
-                 serverCamX_, serverCamY_, serverCamZ_,
-                 serverCamFov_, serverCamFov_ * 1.5f,
-                 serverCamRot_[0], serverCamRot_[1], serverCamRot_[2], serverCamRot_[3]);
+            // Build rotation matrix from quaternion (column-major)
+            float xx = qyx*qyx, yy = qyy*qyy, zz = qyz*qyz;
+            float xy = qyx*qyy, xz = qyx*qyz, yz = qyy*qyz;
+            float wx = qyw*qyx, wy = qyw*qyy, wz = qyw*qyz;
+
+            // Rotation matrix R (column-major):
+            // | 1-2(yy+zz)  2(xy-wz)   2(xz+wy)  0 |
+            // | 2(xy+wz)    1-2(xx+zz) 2(yz-wx)  0 |
+            // | 2(xz-wy)    2(yz+wx)   1-2(xx+yy) 0 |
+            // | 0           0          0         1 |
+            float R[16] = {
+                1-2*(yy+zz), 2*(xy+wz),   2*(xz-wy),    0,
+                2*(xy-wz),   1-2*(xx+zz), 2*(yz+wx),    0,
+                2*(xz+wy),   2*(yz-wx),   1-2*(xx+yy), 0,
+                0,           0,           0,           1
+            };
+
+            // View matrix = R^T * Translation(-eye)
+            // In column-major: view = inverse(R * T(eye)) = T(-eye) * R^T
+            // R^T is just R with rows/columns swapped (already column-major, so transpose)
+            float Rt[16];
+            Rt[0]=R[0]; Rt[1]=R[4]; Rt[2]=R[8];  Rt[3]=0;
+            Rt[4]=R[1]; Rt[5]=R[5]; Rt[6]=R[9];  Rt[7]=0;
+            Rt[8]=R[2]; Rt[9]=R[6]; Rt[10]=R[10]; Rt[11]=0;
+            Rt[12]=0;   Rt[13]=0;   Rt[14]=0;     Rt[15]=1;
+
+            // Apply translation: view = Rt * Translate(-eye)
+            // In column-major, this means: view = Rt with column 3 = Rt * (-eye)
+            out[0]=Rt[0]; out[4]=Rt[4]; out[8]=Rt[8];
+            out[12]=-(Rt[0]*serverCamX_ + Rt[4]*serverCamY_ + Rt[8]*serverCamZ_);
+            out[1]=Rt[1]; out[5]=Rt[5]; out[9]=Rt[9];
+            out[13]=-(Rt[1]*serverCamX_ + Rt[5]*serverCamY_ + Rt[9]*serverCamZ_);
+            out[2]=Rt[2]; out[6]=Rt[6]; out[10]=Rt[10];
+            out[14]=-(Rt[2]*serverCamX_ + Rt[6]*serverCamY_ + Rt[10]*serverCamZ_);
+            out[3]=0; out[7]=0; out[11]=0; out[15]=1;
+
+            static int gfCamLogCounter = 0;
+            if ((gfCamLogCounter++ % 120) == 0) {
+                LOGI("[GF_CAM_QUAT] pos=(%.2f,%.2f,%.2f) fov=%.1f->%.1f q=(%.2f,%.2f,%.2f,%.2f)",
+                     serverCamX_, serverCamY_, serverCamZ_,
+                     serverCamFov_, serverCamFov_ * 1.5f,
+                     qyx, qyy, qyz, qyw);
+            }
+        } else {
+            // No quaternion from server: fall back to broadcast camera below
+            // (don't use lookAt(0,0,0) — it was a TEMP diagnostic)
         }
-        return;
+        // If we built the matrix above, return; otherwise fall through to broadcast
+        if (hasServerCameraRot_) return;
     }
 
-    // 3. Otherwise (emulator/fallback OR Classic mode on real phone with cleared server camera),
+    // 3. Otherwise (Classic mode, emulator, or AR fallback without server camera),
     //    always use the fully dynamic, proportional Broadcast TV Camera!
     // Classic Broadcast TV Camera — exact match to GameplayFootball PC
     // Source: match.cpp UpdateIngameCamera() wide cam (camMethod == 1)
@@ -278,8 +320,8 @@ void ARManager::getViewMatrix(float* out) const {
              sceneHalfX_, sceneHalfZ_, targetX, targetZ, camX, camY, camZ, camDistZ, camHeight);
     }
 
-    // Look at player head height for horizontal sideline broadcast feel
-    float targetY = 1.60f;
+    // Look at upper-torso height for a slightly downward broadcast tilt
+    float targetY = 0.9f;
     lookAt(out, camX, camY, camZ,
                  targetX, targetY, targetZ,
                  0.0f, 1.0f, 0.0f);

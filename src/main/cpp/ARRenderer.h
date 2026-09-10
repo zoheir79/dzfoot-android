@@ -38,7 +38,7 @@ struct AvatarConfig {
     uint8_t skinColor = 3;    // 0..6 (7 tones)
     uint8_t hairColor = 0;    // 0..7 (8 colors)
     uint8_t playerNumber = 0; // jersey number 0..99
-    float   height = 1.0f;
+    float   height = 1.80f;
 };
 
 class PlayerRig {
@@ -81,6 +81,9 @@ public:
     AvatarConfig loadedCfg_;
     bool hasLoadedCfg_ = false;
 
+    // Bounding box minimum Y (in model-local meters), used to place feet at y=0
+    float minY_ = 0.0f;
+
     bool configMatches(const AvatarConfig& cfg) const {
         return hasLoadedCfg_ &&
                loadedCfg_.bodyType == cfg.bodyType &&
@@ -113,6 +116,18 @@ struct PlayerAnimState {
         blend = 0.0f;
     }
 
+    // Play with server-provided progress (0-65535 → 0.0-1.0).
+    // Seeks into the animation so it doesn't restart from frame 0 on every change.
+    // Caller must ensure animId != current.
+    void playWithProgress(uint8_t animId, uint16_t progress) {
+        previous = current;
+        current = animId;
+        prevTime = time;
+        float p = static_cast<float>(progress) / 65535.0f;
+        time = p * 2.0f; // start at server's current frame (~2s assumed anim length)
+        blend = 0.0f;
+    }
+
     void update(float dt) {
         time += dt;
         if (blend < 1.0f) {
@@ -124,8 +139,23 @@ struct PlayerAnimState {
 
 class ARRenderer {
 public:
+    enum class LoadingState : int {
+        NotStarted = 0,
+        CompilingShaders,
+        LoadingTextures,
+        LoadingAnimations,
+        LoadingSceneAssets,
+        BuildingRigs,
+        Ready,
+        Failed
+    };
+
     void init();
     void destroy();
+
+    LoadingState getLoadingState() const { return loadingState_; }
+    int getLoadingProgress() const { return loadingProgress_; }
+    bool isReady() const { return loadingState_ == LoadingState::Ready; }
 
     void drawCameraBackground(ARManager& ar);
     void renderScene(ARManager& ar, const float* playerPositions, int numPlayers,
@@ -135,10 +165,12 @@ public:
                      const float* playerRotY = nullptr,
                      const uint8_t* playerFlags = nullptr, const uint8_t* playerTeams = nullptr,
                      const uint8_t* playerRoles = nullptr,
-                     class TouchController* ctrl = nullptr, int screenW = 0, int screenH = 0);
+                     class TouchController* ctrl = nullptr, int screenW = 0, int screenH = 0,
+                     const uint16_t* playerAnimProgress = nullptr);
 
     void setPlayerMesh(const SkinnedMesh& mesh);
     void setMatchSetup(const dzfoot::MatchSetupPacket& setup);
+    void preloadPlayerRigs();
 
     SceneGraph& scene() { return scene_; }
     Camera& camera() { return camera_; }
@@ -146,11 +178,11 @@ public:
     // Scale factors derived from actual pitch GLB half-extents so players align
     // with the visible field white lines regardless of pitch asset size.
     float getPitchScaleX() const { return pitchHalf_[0] * 0.1f; }
-    float getPitchScaleZ() const { return pitchHalf_[1] * 0.1f / 0.4306f; } // exact GF pitchHalfH/Y_FIELD_SCALE = 36/83.6
+    float getPitchScaleZ() const { return pitchHalf_[1] * 0.1f; }
 
     // Scene half-extents in metres (used by broadcast camera for proportional positioning)
     float getSceneHalfX() const { return pitchHalf_[0] * 0.1f; }
-    float getSceneHalfZ() const { return pitchHalf_[1] * 0.1f / 0.4306f; } // must match getPitchScaleZ()
+    float getSceneHalfZ() const { return pitchHalf_[1] * 0.1f; }
 
 private:
     GLuint cameraShader_  = 0;
@@ -182,6 +214,10 @@ private:
     // Pitch GLB half-extents in local space (meters), used to normalize grass lines
     float pitchHalf_[2] = { 52.5f, 34.0f };
 
+    // Loading state reported to Java UI layer
+    LoadingState loadingState_ = LoadingState::NotStarted;
+    int loadingProgress_ = 0;
+
     static constexpr float quadPositions_[8] = {
         -1.0f, -1.0f,  1.0f, -1.0f,
         -1.0f,  1.0f,  1.0f,  1.0f,
@@ -193,7 +229,8 @@ private:
                        const uint8_t* playerAnims, const float* playerVels,
                        const float* playerRotY,
                        const uint8_t* playerFlags, const uint8_t* playerTeams,
-                       const uint8_t* playerRoles);
+                       const uint8_t* playerRoles,
+                       const uint16_t* playerAnimProgress = nullptr);
 
     void renderShadowMap(const float* playerPositions, int numPlayers,
                          const uint8_t* playerAnims, const float* playerVels,

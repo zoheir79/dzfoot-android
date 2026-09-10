@@ -97,8 +97,9 @@ dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
     float latest = interpolator_.latestReceivedTimeMs();
     float renderTime = latest - EntityInterpolator::INTERP_DELAY_MS;
 
+    double elapsedLocal = 0.0;
     if (lastPacketLocalTimeMs_ > 0.0) {
-        double elapsedLocal = getSteadyTimeMs() - lastPacketLocalTimeMs_;
+        elapsedLocal = getSteadyTimeMs() - lastPacketLocalTimeMs_;
         if (elapsedLocal > 200.0) elapsedLocal = 200.0; // limit drift in case of suspended threads
         
         float estServerTime = lastPacketServerTimeMs_ + static_cast<float>(elapsedLocal);
@@ -110,8 +111,9 @@ dzfoot::GameStatePacket GameBridge::getInterpolatedState() {
 
     static int interpCounter = 0;
     if ((interpCounter++ % 120) == 0) {
-        LOGI("[gamestates] interp tick=%u ball=(%.3f,%.3f,%.3f) p0=(%.3f,%.3f) p6=(%.3f,%.3f)",
-             out.tick, out.ball.pos[0], out.ball.pos[1], out.ball.pos[2],
+        LOGI("[gamestates] interp tick=%u renderT=%.1f latest=%.1f elapsedLocal=%.1fms ball=(%.3f,%.3f,%.3f) p0=(%.3f,%.3f) p6=(%.3f,%.3f)",
+             out.tick, renderTime, latest, elapsedLocal,
+             out.ball.pos[0], out.ball.pos[1], out.ball.pos[2],
              out.players[0].pos[0], out.players[0].pos[1],
              out.players[6].pos[0], out.players[6].pos[1]);
     }

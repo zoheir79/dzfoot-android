@@ -120,6 +120,21 @@ Java_com_football_ar_JniBridge_nativeGetBuildMarker(JNIEnv* env, jobject thiz) {
     return env->NewStringUTF(NATIVE_BUILD_MARKER);
 }
 
+JNIEXPORT jint JNICALL
+Java_com_football_ar_JniBridge_nativeGetLoadingProgress(JNIEnv* env, jobject thiz) {
+    return static_cast<jint>(gRenderer.getLoadingProgress());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_football_ar_JniBridge_nativeIsRendererReady(JNIEnv* env, jobject thiz) {
+    return gRenderer.isReady() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_football_ar_JniBridge_nativeGetLoadingState(JNIEnv* env, jobject thiz) {
+    return static_cast<jint>(static_cast<int>(gRenderer.getLoadingState()));
+}
+
 JNIEXPORT void JNICALL
 Java_com_football_ar_JniBridge_nativeDestroy(JNIEnv* env, jobject thiz) {
     if (gActivityObj) {
@@ -323,6 +338,12 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
             uint8_t team = gs.players[activeIdx].team;
             uint8_t playerIdx = static_cast<uint8_t>(activeIdx % 11);
             gTouchController.setActivePlayer(team, playerIdx);
+            static int activeLogCounter = 0;
+            if ((activeLogCounter++ % 120) == 0) {
+                LOGI("[ACTIVE_PLAYER] idx=%d team=%d playerIdx=%d pos=(%.2f,%.2f,%.2f)",
+                     activeIdx, team, playerIdx,
+                     gs.players[activeIdx].pos[0], gs.players[activeIdx].pos[1], gs.players[activeIdx].pos[2]);
+            }
         } else {
             // No active player designated by GF yet (e.g. before kickoff)
             gTouchController.setActivePlayer(0, 0);
@@ -336,11 +357,13 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     uint8_t playerFlags[25];
     uint8_t playerTeams[25];
     uint8_t playerRoles[25];
+    uint16_t playerAnimProgress[25];
     for (int i = 0; i < 22; ++i) {
         positions[i * 3 + 0] = gs.players[i].pos[0];
         positions[i * 3 + 1] = gs.players[i].pos[1];
         positions[i * 3 + 2] = gs.players[i].pos[2];
         playerAnims[i] = gs.players[i].anim;
+        playerAnimProgress[i] = gs.players[i].animProgress;
         
         // Pass stable direction vector for heading angle selection, and actual scalar speed.
         // Server vel is noisy/small; dir is stable and computed on the server from physical direction.
@@ -351,7 +374,7 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         playerVels[i * 3 + 1] = -gs.players[i].dir[1]; // GF Y maps to -OpenGL Z
         playerVels[i * 3 + 2] = speed;
         
-        playerRotY[i] = gs.players[i].rotY; // GF yaw (Z-up) → OpenGL yaw (Y-up), same CCW sign
+        playerRotY[i] = -gs.players[i].rotY; // GF yaw (Z-up) → OpenGL yaw (Y-up) with sign inversion
         playerFlags[i] = gs.players[i].flags;
         playerTeams[i] = gs.players[i].team;
         playerRoles[i] = gs.players[i].role;
@@ -363,12 +386,13 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
         positions[idx * 3 + 1] = gs.officials[i].pos[1];
         positions[idx * 3 + 2] = gs.officials[i].pos[2];
         playerAnims[idx] = gs.officials[i].anim;
+        playerAnimProgress[idx] = 0;
         
         playerVels[idx * 3 + 0] = gs.officials[i].dir[0];
         playerVels[idx * 3 + 1] = -gs.officials[i].dir[1];
         playerVels[idx * 3 + 2] = 0.0f; // ignored for officials
         
-        playerRotY[idx] = gs.officials[i].rotY;
+        playerRotY[idx] = -gs.officials[i].rotY;
         playerFlags[idx] = gs.officials[i].flags;
         playerTeams[idx] = gs.officials[i].team; // 2 = officials team
         playerRoles[idx] = gs.officials[i].role; // 0=referee, 1=linesmanN, 2=linesmanS
@@ -379,7 +403,8 @@ Java_com_football_ar_JniBridge_nativeOnFrame(
     gRenderer.renderScene(gArManager, positions, 25, ballPos,
                           nullptr, 0, playerAnims, playerVels, playerRotY,
                           playerFlags, playerTeams, playerRoles,
-                          &gTouchController, gScreenW, gScreenH);
+                          &gTouchController, gScreenW, gScreenH,
+                          playerAnimProgress);
 #if USE_BGFX
     bgfx::frame();
 #endif
@@ -476,6 +501,7 @@ Java_com_football_ar_JniBridge_nativeOnMatchSetup(
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     gGameBridge.applyMatchSetup((const uint8_t*)bytes, env->GetArrayLength(data));
     gRenderer.setMatchSetup(gGameBridge.matchSetup());
+    gRenderer.preloadPlayerRigs();
     env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
 }
 

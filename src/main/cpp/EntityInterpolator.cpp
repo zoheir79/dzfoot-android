@@ -92,8 +92,11 @@ void EntityInterpolator::interpolate(float renderTimeMs, dzfoot::GameStatePacket
         lerpVec3(snapA.state.players[i].pos, snapB.state.players[i].pos, t, out.players[i].pos);
         lerpFloat(snapA.state.players[i].vel[0], snapB.state.players[i].vel[0], t, out.players[i].vel[0]);
         lerpFloat(snapA.state.players[i].vel[1], snapB.state.players[i].vel[1], t, out.players[i].vel[1]);
-        lerpFloat(snapA.state.players[i].vel[2], snapB.state.players[i].vel[2], t, out.players[i].vel[2]);
         lerpAngle(snapA.state.players[i].rotY, snapB.state.players[i].rotY, t, out.players[i].rotY);
+        // Anim detail fields: snap-forward (no interpolation — they're categorical/discrete)
+        out.players[i].functionType = snapB.state.players[i].functionType;
+        out.players[i].enumVelocity = snapB.state.players[i].enumVelocity;
+        out.players[i].animProgress = snapB.state.players[i].animProgress;
     }
 
     // Interpolate camera
