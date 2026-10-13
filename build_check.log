@@ -1,0 +1,82 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :preBuild UP-TO-DATE
+> Task :preDebugBuild UP-TO-DATE
+> Task :mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :checkDebugAarMetadata UP-TO-DATE
+> Task :generateDebugResValues UP-TO-DATE
+> Task :mapDebugSourceSetPaths UP-TO-DATE
+> Task :generateDebugResources UP-TO-DATE
+> Task :mergeDebugResources UP-TO-DATE
+> Task :packageDebugResources UP-TO-DATE
+> Task :parseDebugLocalResources UP-TO-DATE
+> Task :createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :extractDeepLinksDebug UP-TO-DATE
+
+> Task :processDebugMainManifest
+package="com.football.ar" found in source AndroidManifest.xml: E:\dzfoot\repos\dzfoot-android\src\main\AndroidManifest.xml.
+Setting the namespace via the package attribute in the source AndroidManifest.xml is no longer supported, and the value is ignored.
+Recommendation: remove package="com.football.ar" from the source AndroidManifest.xml: E:\dzfoot\repos\dzfoot-android\src\main\AndroidManifest.xml.
+E:\dzfoot\repos\dzfoot-android\src\main\AndroidManifest.xml:23:9-41 Warning:
+	android:extractNativeLibs should not be specified in this source AndroidManifest.xml file. See https://d.android.com/guide/topics/manifest/application-element#extractNativeLibs for more information.
+The AGP Upgrade Assistant can remove the attribute from the AndroidManifest.xml file and update the build file accordingly. See https://d.android.com/studio/build/agp-upgrade-assistant for more information.
+
+> Task :processDebugManifest
+> Task :javaPreCompileDebug UP-TO-DATE
+> Task :mergeDebugShaders UP-TO-DATE
+> Task :compileDebugShaders NO-SOURCE
+> Task :generateDebugAssets UP-TO-DATE
+> Task :mergeDebugAssets UP-TO-DATE
+> Task :compressDebugAssets UP-TO-DATE
+> Task :checkDebugDuplicateClasses UP-TO-DATE
+> Task :desugarDebugFileDependencies UP-TO-DATE
+> Task :mergeExtDexDebug UP-TO-DATE
+> Task :mergeLibDexDebug UP-TO-DATE
+> Task :mergeDebugJniLibFolders UP-TO-DATE
+> Task :mergeDebugNativeLibs UP-TO-DATE
+> Task :stripDebugDebugSymbols UP-TO-DATE
+> Task :validateSigningDebug UP-TO-DATE
+> Task :writeDebugAppMetadata UP-TO-DATE
+> Task :writeDebugSigningConfigVersions UP-TO-DATE
+> Task :processDebugManifestForPackage
+> Task :processDebugResources
+> Task :compileDebugKotlin
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/components/CommonComponents.kt:231:44 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamCompositionScreen.kt:390:57 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamCompositionScreen.kt:391:63 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamCompositionScreen.kt:392:67 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamCompositionScreen.kt:393:50 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:125:54 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:126:60 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:127:61 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:128:71 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:129:75 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/TeamSelectScreen.kt:130:58 Java type mismatch: inferred type is 'kotlin.Nothing?', but 'kotlin.String' was expected.
+w: file:///E:/dzfoot/repos/dzfoot-android/src/main/java/com/football/ar/ui/screens/WaitingScreen.kt:175:52 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+
+> Task :compileDebugJavaWithJavac
+Java compiler version 21 has deprecated support for compiling with source/target version 8.
+Try one of the following options:
+    1. [Recommended] Use Java toolchain with a lower language version
+    2. Set a higher source/target version
+    3. Use a lower version of the JDK running the build (if you're not using Java toolchain)
+For more details on how to configure these settings, see https://developer.android.com/build/jdks.
+To suppress this warning, set android.javaCompile.suppressSourceTargetDeprecationWarning=true in gradle.properties.
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+3 warnings
+
+> Task :processDebugJavaRes UP-TO-DATE
+> Task :mergeDebugJavaResource UP-TO-DATE
+> Task :dexBuilderDebug
+> Task :mergeProjectDexDebug
+
+> Task :packageDebug
+PackagingOptions.jniLibs.useLegacyPackaging should be set to true because android:extractNativeLibs is set to "true" in AndroidManifest.xml.
+
+> Task :createDebugApkListingFileRedirect
+> Task :assembleDebug
+
+BUILD SUCCESSFUL in 2m 2s
+35 actionable tasks: 10 executed, 25 up-to-date

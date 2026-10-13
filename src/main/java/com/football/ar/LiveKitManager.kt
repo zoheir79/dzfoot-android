@@ -18,7 +18,7 @@ class LiveKitManager(private val activity: MainActivity) {
     private var wsUrl: String = ""
     private var token: String = ""
     private var retryCount = 0
-    private val maxRetries = 3
+    private val maxRetries = 12
     private val retryHandler = Handler(Looper.getMainLooper())
     private var connectAttempt = 0
     private var stopped = false
@@ -55,7 +55,7 @@ class LiveKitManager(private val activity: MainActivity) {
                             "ev" -> {
                                 if (event.data.size >= 8) {
                                     val type = (event.data[6].toInt() and 0xFF) or ((event.data[7].toInt() and 0xFF) shl 8)
-                                    if (type == 3) { // PACKET_MATCH_SETUP
+                                    if (type == 4) { // PACKET_MATCH_SETUP (DZFootProtocol.h)
                                         activity.onMatchSetupReceived(event.data)
                                     } else {
                                         activity.godotAdapter.sendMatchEvent(event.data)

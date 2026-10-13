@@ -1,67 +1,57 @@
 package com.football.ar
 
 import android.app.Activity
-import android.content.Context
 import android.util.Log
 import android.view.View
 import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
 import org.godotengine.godot.Godot
-import org.godotengine.godot.GodotHost
-import org.godotengine.godot.GodotRenderView
+import org.godotengine.godot.GodotFragment
 import org.godotengine.godot.plugin.GodotPlugin
-import java.util.Collections
+import java.io.File
 
 /**
  * Manages the Godot engine lifecycle inside the Android app.
- * Replaces the old GLSurfaceView + ARRenderer approach.
- *
- * Godot renders the 3D scene (stadium, players, ball, camera, lighting)
- * while Kotlin handles LiveKit, touch input, and UI overlay.
+ * Refactored to use GodotFragment for Godot 4.x compatibility.
  */
-class GodotAdapter(private val activity: Activity) : GodotHost {
+class GodotAdapter(private val activity: Activity) {
 
-    private val TAG = "GodotAdapter"
+    private val TAG = "GodotAdapter_V9"
 
-    private var godot: Godot? = null
-    private var renderView: GodotRenderView? = null
+    private var godotFragment: GodotFragment? = null
     private var containerLayout: FrameLayout? = null
     private var dzPlugin: DZFootPlugin? = null
+    private var dzPluginGodot: Godot? = null
 
-    /**
-     * Initialize Godot engine with the DZFoot project.
-     * Returns the View that should be added to the Activity layout.
-     */
     fun initialize(): View? {
         try {
-            Log.i(TAG, "Initializing Godot engine...")
+            Log.i(TAG, "!!! INITIALIZING GODOT ENGINE V9 (GodotFragment) !!!")
 
-            godot = Godot.getInstance(activity)
-
-            // Create the DZFoot plugin for Kotlin ↔ GDScript bridge
-            dzPlugin = DZFootPlugin(godot!!)
-
-            // Create a container layout for Godot's render view
             containerLayout = FrameLayout(activity)
+            containerLayout?.id = View.generateViewId()
 
-            // Initialize the Godot engine with --main-pack pointing to the .pck
-            // in the APK assets directory (relative path, resolved via AAssetManager).
-            val cmdLine = listOf("--main-pack", "dzfoot.pck")
-            Log.i(TAG, "Godot command line: $cmdLine")
-            godot?.initEngine(this, cmdLine, emptySet())
-
-            // Get the render view — may be null immediately after initEngine,
-            // will retry in onResume()
-            renderView = godot?.renderView
-            if (renderView != null) {
-                Log.i(TAG, "renderView available immediately, adding to container")
-                containerLayout?.addView(renderView?.view)
-            } else {
-                Log.w(TAG, "renderView is null after initEngine — will retry in onResume")
+            // Copy project.pck to internal storage to ensure reliable access
+            val pckFile = File(activity.filesDir, "project.pck")
+            try {
+                activity.assets.open("project.pck").use { input ->
+                    pckFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.i(TAG, "!!! project.pck copied successfully (size: ${pckFile.length()}) !!!")
+            } catch (e: Exception) {
+                Log.e(TAG, "!!! Failed to copy project.pck: ${e.message} !!!")
             }
 
-            godot?.onStart(this)
+            val fragmentActivity = activity as? AppCompatActivity
+                ?: throw IllegalStateException("Activity must be an AppCompatActivity")
 
-            Log.i(TAG, "Godot engine initialized successfully (isInitialized=${godot?.isInitialized()})")
+            godotFragment = GodotFragment()
+            
+            fragmentActivity.supportFragmentManager.beginTransaction()
+                .replace(containerLayout!!.id, godotFragment!!)
+                .commitNowAllowingStateLoss()
+
             return containerLayout
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Godot: ${e.message}", e)
@@ -69,121 +59,64 @@ class GodotAdapter(private val activity: Activity) : GodotHost {
         }
     }
 
-    override fun getCommandLine(): List<String> {
-        return listOf("--main-pack", "dzfoot.pck")
+    fun getCommandLine(): List<String> {
+        val pckFile = File(activity.filesDir, "project.pck")
+        return listOf("--main-pack", pckFile.absolutePath)
     }
 
-    override fun getHostPlugins(godot: Godot): Set<GodotPlugin> {
-        val plugins = mutableSetOf<GodotPlugin>()
-        dzPlugin?.let { plugins.add(it) }
-        Log.i(TAG, "getHostPlugins: providing ${plugins.size} plugins")
-        return plugins
-    }
-
-    /**
-     * Send a GameStatePacket (raw bytes) to the Godot scene via DZFootPlugin signal.
-     * Called from LiveKit data channel callback.
-     */
-    fun sendGameState(data: ByteArray) {
-        dzPlugin?.emitGameState(data)
-    }
-
-    /**
-     * Send a MatchSetupPacket to Godot.
-     */
-    fun sendMatchSetup(data: ByteArray) {
-        dzPlugin?.emitMatchSetup(data)
-    }
-
-    /**
-     * Send a MatchEventPacket to Godot.
-     */
-    fun sendMatchEvent(data: ByteArray) {
-        dzPlugin?.emitMatchEvent(data)
-    }
-
-    /**
-     * Send a TacticalStatePacket to Godot (currently logged, can be forwarded later).
-     */
-    fun sendTacticalState(data: ByteArray) {
-        // Tactical state can be forwarded to Godot if needed for UI/debug
-        Log.d(TAG, "Tactical state received: ${data.size} bytes")
-    }
-
-    /**
-     * Get the current PlayerInputPacket from Godot (touch/keyboard input).
-     * Called periodically (100Hz) to send player input to the server via LiveKit.
-     */
-    fun getPlayerInput(): ByteArray? {
-        return dzPlugin?.getInputBytes()
-    }
-
-    /**
-     * Pause Godot rendering (e.g. when activity is paused).
-     */
-    fun onPause() {
-        Log.i(TAG, "Pausing Godot")
-        godot?.onPause(this)
-    }
-
-    /**
-     * Resume Godot rendering.
-     */
-    fun onResume() {
-        Log.i(TAG, "Resuming Godot")
-        // Retry getting renderView — it may not have been available right after initEngine
-        if (renderView == null) {
-            renderView = godot?.renderView
-            if (renderView != null) {
-                Log.i(TAG, "renderView now available in onResume, adding to container")
-                containerLayout?.addView(renderView?.view)
-                containerLayout?.requestLayout()
-            } else {
-                Log.w(TAG, "renderView still null in onResume")
-            }
+    fun getHostPlugins(godot: Godot): Set<GodotPlugin> {
+        // The plugin is bound to a specific Godot instance. On the second
+        // match the previous plugin still references the dead instance and
+        // emitSignal() throws "not registered" — recreate it per instance.
+        if (dzPlugin == null || dzPluginGodot !== godot) {
+            dzPlugin = DZFootPlugin(godot)
+            dzPluginGodot = godot
         }
-        godot?.onResume(this)
+        return setOf(dzPlugin!!)
     }
 
-    /**
-     * Destroy Godot engine and free resources.
-     */
+    fun getGodot(): Godot {
+        return godotFragment?.getGodot() 
+            ?: Godot.getInstance(activity)
+    }
+
+    fun sendGameState(data: ByteArray) { dzPlugin?.emitGameState(data) }
+    fun sendMatchSetup(data: ByteArray) { dzPlugin?.emitMatchSetup(data) }
+    fun sendMatchEvent(data: ByteArray) { dzPlugin?.emitMatchEvent(data) }
+    fun sendTacticalState(data: ByteArray) { dzPlugin?.emitTacticalState(data) }
+    fun getPlayerInput(): ByteArray? { return dzPlugin?.getInputBytes() }
+
+    // Lifecycle is handled by GodotFragment
+    fun onPause() {}
+    fun onResume() {}
+    fun onStart() {}
+    fun onStop() {}
     fun destroy() {
-        Log.i(TAG, "Destroying Godot engine")
-        godot?.onDestroy(this)
-        renderView = null
+        // Removing the fragment runs its onDestroy → Godot.onDestroy, which
+        // shuts the engine and GL thread down cleanly while the activity is
+        // still alive. Just dropping references lets the GL thread exit during
+        // activity teardown → SIGSEGV in GodotRenderer.onRenderThreadExiting.
+        val frag = godotFragment
+        godotFragment = null
         containerLayout = null
-    }
-
-    /**
-     * Check if Godot engine is initialized and ready.
-     */
-    fun isReady(): Boolean {
-        val g = godot ?: return false
-        val initialized = g.isInitialized()
-        val hasRenderView = renderView != null
-        if (initialized && !hasRenderView) {
-            // Retry getting renderView
-            renderView = godot?.renderView
-            if (renderView != null) {
-                Log.i(TAG, "renderView obtained lazily in isReady(), adding to container")
-                containerLayout?.addView(renderView?.view)
-                containerLayout?.requestLayout()
+        if (frag != null && activity is AppCompatActivity) {
+            try {
+                activity.supportFragmentManager.beginTransaction()
+                    .remove(frag)
+                    .commitNowAllowingStateLoss()
+            } catch (e: Exception) {
+                Log.w(TAG, "destroy: fragment removal failed: ${e.message}")
             }
         }
-        if (initialized) {
-            Log.i(TAG, "isReady: initialized=true renderView=${renderView != null}")
+    }
+
+    fun isReady(): Boolean {
+        val godot = godotFragment?.getGodot()
+        val initialized = godot?.isInitialized() ?: false
+        val hasView = godot?.renderView != null
+        if (!initialized || !hasView) {
+            Log.d(TAG, "isReady check: initialized=$initialized, hasView=$hasView")
         }
-        return initialized
-    }
-
-    // === GodotHost interface ===
-
-    override fun getActivity(): Activity {
-        return activity
-    }
-
-    override fun getGodot(): Godot {
-        return godot ?: throw IllegalStateException("Godot not initialized")
+        return initialized && hasView
     }
 }

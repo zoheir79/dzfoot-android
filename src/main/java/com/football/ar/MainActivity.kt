@@ -1,5 +1,6 @@
 package com.football.ar
 
+import android.app.Activity
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -13,8 +14,11 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import org.godotengine.godot.Godot
+import org.godotengine.godot.GodotHost
+import org.godotengine.godot.plugin.GodotPlugin
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), GodotHost {
 
     lateinit var godotAdapter: GodotAdapter
     private var godotView: View? = null
@@ -42,17 +46,40 @@ class MainActivity : AppCompatActivity() {
     private var loadingStartTime = 0L
     private val LOADING_TIMEOUT_MS = 45000L
     private val GAMESTATE_TIMEOUT_MS = 12000L
+    private val SERVER_TIMEOUT_MS = 120000L  // GF container spawn can take ~2min
     private var retryCount = 0
     private val MAX_RETRIES = 3
     private var firstGameStateReceived = false
     private var firstSetupReceived = false
+
+    // Match-end tracking: the GF server pushes EVENT_END_MATCH then stops the
+    // gamestate stream. If the event packet is lost (or the container dies),
+    // the watchdog below detects the dead stream and ends the match anyway.
+    @Volatile private var matchEnded = false
+    @Volatile private var lastGameStateAt = 0L
+    @Volatile private var lastScoreA = 0
+    @Volatile private var lastScoreB = 0
+    private val GAMESTATE_DEAD_MS = 20000L
+    private val endWatchdog = object : Runnable {
+        override fun run() {
+            if (!matchEnded && firstGameStateReceived && lastGameStateAt > 0 &&
+                System.currentTimeMillis() - lastGameStateAt > GAMESTATE_DEAD_MS) {
+                Log.w("DZ_END", "No gamestate for >${GAMESTATE_DEAD_MS}ms — stream dead, ending match")
+                onEndMatch(lastScoreA, lastScoreB)
+            }
+            if (!matchEnded) loadingHandler.postDelayed(this, 5000)
+        }
+    }
 
     // Retry state for the current connection
     private var lastLkUrl: String? = null
     private var lastToken: String? = null
     private var lastRoomId: String? = null
     private var lastMode: String? = null
+    @Volatile private var expectingServer = false  // set as soon as a real match is requested
     private var lastForceMcoVsMca: Boolean = false
+    private var lastTeamA: String? = null
+    private var lastTeamB: String? = null
     private var retryDialogShown = false
 
     // Dynamic crowd volume (FIFA-style reactive audio)
@@ -63,7 +90,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             // Smooth volume transition toward target
             if (kotlin.math.abs(crowdVolumeCurrent - crowdVolumeTarget) > 0.01f) {
-                crowdVolumeCurrent += (crowdVolumeTarget - crowdVolumeCurrent) * 0.1f
+                crowdVolumeCurrent += (crowdVolumeTarget - crowdVolumeTarget) * 0.1f
                 audioSystem.setLoopVolume(crowdVolumeCurrent)
             }
             crowdHandler.postDelayed(this, 100)
@@ -98,6 +125,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
+        Log.i("MainActivity_V9", "!!! MAIN ACTIVITY ONCREATE V9 !!!")
 
         // Initialize Godot engine as the 3D renderer
         godotAdapter = GodotAdapter(this)
@@ -112,11 +140,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 24f
             setTextColor(0xFFFFFFFF.toInt())
             text = "0 - 0"
+            visibility = View.INVISIBLE
         }
         timerText = TextView(this).apply {
             textSize = 20f
             setTextColor(0xFFFFFFFF.toInt())
             text = "00:00"
+            visibility = View.INVISIBLE
         }
         eventText = TextView(this).apply {
             textSize = 18f
@@ -189,6 +219,11 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(root)
 
+        // A match can run for minutes without touch input — never let the
+        // display sleep (screen-off would pause GodotFragment mid-match and
+        // silently freeze inputs + LiveKit callbacks).
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         loadingStartTime = System.currentTimeMillis()
         loadingHandler.post(loadingRunnable)
 
@@ -205,7 +240,10 @@ class MainActivity : AppCompatActivity() {
         val forceMcoVsMca = intent.getBooleanExtra("force_mco_vs_mca", false)
         val teamA = intent.getStringExtra("team_a")
         val teamB = intent.getStringExtra("team_b")
-
+expectingServer = mode != null
+        lastTeamA = teamA
+        lastTeamB = teamB
+        
         if (mode != null && roomId != null && token != null && lkUrl != null) {
             // Launched from menu with all parameters — connect directly
             connectToLiveKit(lkUrl, token, roomId, mode)
@@ -213,7 +251,7 @@ class MainActivity : AppCompatActivity() {
             // Single-player modes that need match creation
             when (mode) {
                 "ai_vs_ai" -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = forceMcoVsMca)
-                "vs_ai", "ar" -> createMatchAndConnect(mode = if (mode == "ar") "vs_ai" else mode, forceMcoVsMca = false)
+                "vs_ai", "ar" -> createMatchAndConnect(mode = if (mode == "ar") "vs_ai" else mode, forceMcoVsMca = false, selectedTeamA = teamA, selectedTeamB = teamB)
                 else -> showModeSelectionDialogFallback()
             }
         } else {
@@ -260,14 +298,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun createMatchAndConnect(
         mode: String = "vs_ai",
-        forceMcoVsMca: Boolean = false
+        forceMcoVsMca: Boolean = false,
+        selectedTeamA: String? = null,
+        selectedTeamB: String? = null
     ) {
         Thread {
             try {
-                // 1. Fetch teams list and resolve IDs
-                var teamA: String? = null
-                var teamB: String? = null
-                try {
+                // 1. Use teams chosen in the menu, otherwise fetch the list and resolve IDs
+                var teamA: String? = selectedTeamA
+                var teamB: String? = selectedTeamB
+                if (teamA == null || teamB == null) try {
                     val teamsUrl = java.net.URL("${Config.catalogUrl}/teams")
                     val teamsConn = teamsUrl.openConnection() as java.net.HttpURLConnection
                     teamsConn.requestMethod = "GET"
@@ -610,6 +650,9 @@ class MainActivity : AppCompatActivity() {
         val inPlay = (gameFlags and 1) != 0
         val scoreA = data[26].toInt()
         val scoreB = data[27].toInt()
+        lastScoreA = scoreA
+        lastScoreB = scoreB
+        lastGameStateAt = System.currentTimeMillis()
         val timerBytes = data.sliceArray(28 until 32)
         val timer = java.nio.ByteBuffer.wrap(timerBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).float
         val minutes = (timer / 60).toInt()
@@ -617,9 +660,9 @@ class MainActivity : AppCompatActivity() {
         val ballX = bb.getFloat(32)
         val ballY = bb.getFloat(36)
         val ballZ = bb.getFloat(40)
-        // NetworkPlayerState layout: pos(12)+vel(12)+dir(12)+rotY(4)+anim(1)+team(1)+role(1)+flags(1)+tired(4)=48
-        // flags offset within player record = 40+1+1+1 = 43
-        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 43].toInt() and 4 != 0 } ?: -1
+        // NetworkPlayerState (48B): pos(12)+vel(8)+dir(12)+rotY(4)+anim+team+role+flags@39+tired(4)+functionType+enumVelocity+animProgress(2)
+        // flags offset within player record = 39 (bit 2 = active player)
+        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 39].toInt() and 4 != 0 } ?: -1
         // Camera offset: 12(header)+4(tick)+8(ts)+1(mode)+1(flags)+2(score)+4(timer)+40(ball)+1056(players)+96(officials)=1224
         val camX = bb.getFloat(1224)
         val camY = bb.getFloat(1228)
@@ -630,6 +673,9 @@ class MainActivity : AppCompatActivity() {
         val camRot3 = bb.getFloat(1248)
         val camFov = bb.getFloat(1252)
         Log.i("DZ_STATE", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        if (!firstGameStateReceived) {
+            loadingHandler.postDelayed(endWatchdog, 5000)
+        }
         firstGameStateReceived = true
         runOnUiThread {
             scoreText.text = "$scoreA - $scoreB"
@@ -667,29 +713,57 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Demo mode timeout: if Godot is ready but no match data arrives, switch to demo
+        // Demo mode timeout: ONLY when no server connection was requested
+        // (offline launch without mode/params). A real match goes through the
+        // GF Docker worker which can take ~2min to spawn — wait much longer.
         if (ready && elapsed > GAMESTATE_TIMEOUT_MS && !firstSetupReceived && !retryDialogShown) {
-            Log.w("DZ_LOADING", "Timeout waiting for match setup after ${elapsed}ms — switching to demo mode")
-            firstSetupReceived = true
-            firstGameStateReceived = true
-            loadingStatusText.text = "Mode démo (aucun serveur)"
-            loadingProgressBar.progress = 100
-            loadingHandler.postDelayed({
-                if (loadingContainer.visibility == View.VISIBLE) {
-                    Log.i("DZ_LOADING", "Hiding loading overlay in demo mode after ${elapsed}ms")
-                    loadingContainer.visibility = View.GONE
+            if (!expectingServer) {
+                Log.w("DZ_LOADING", "Timeout waiting for match setup after ${elapsed}ms — switching to demo mode")
+                firstSetupReceived = true
+                firstGameStateReceived = true
+                loadingStatusText.text = "Mode démo (aucun serveur)"
+                loadingProgressBar.progress = 100
+                loadingHandler.postDelayed({
+                    if (loadingContainer.visibility == View.VISIBLE) {
+                        Log.i("DZ_LOADING", "Hiding loading overlay in demo mode after ${elapsed}ms")
+                        loadingContainer.visibility = View.GONE
+                    }
+                }, 1500)
+                return
+            }
+            // Server match expected but setup hasn't arrived yet — keep waiting
+            // up to SERVER_TIMEOUT_MS, then offer a retry instead of fake demo data.
+            // BUT if live gamestates are already flowing, the connection is fine —
+            // degrade to the match without setup (retry would block a working match).
+            if (elapsed > SERVER_TIMEOUT_MS) {
+                if (firstGameStateReceived) {
+                    Log.w("DZ_LOADING", "Setup lost but gamestates flowing — entering match after ${elapsed}ms")
+                    firstSetupReceived = true
+                    return
                 }
-            }, 1500)
-            return
+                retryDialogShown = true
+                showRetryDialog("Le serveur de match ne répond pas. Réessayer ?")
+                return
+            }
         }
 
-        // Hard timeout: if loading overlay is still visible after 25s, hide it regardless
-        if (elapsed > 25000L && loadingContainer.visibility == View.VISIBLE) {
+        // Hard timeout: hide the overlay regardless after 25s offline,
+        // or SERVER_TIMEOUT_MS when a real server connection is expected.
+        val hardTimeout = if (!expectingServer) 25000L else SERVER_TIMEOUT_MS
+        if (elapsed > hardTimeout && loadingContainer.visibility == View.VISIBLE) {
             Log.w("DZ_LOADING", "Hard timeout — hiding loading overlay after ${elapsed}ms (godotReady=$ready)")
             firstSetupReceived = true
             firstGameStateReceived = true
             loadingContainer.visibility = View.GONE
             return
+        }
+
+        // gf.setup is published one-shot by the GF server; if the relay bot
+        // joined late it's lost. If live gamestates arrive anyway, don't hold
+        // the overlay hostage — degrade to default kits after 20s.
+        if (ready && !firstSetupReceived && firstGameStateReceived && elapsed > 20000L) {
+            Log.w("DZ_LOADING", "Gamestates flowing but setup never arrived — entering match without it after ${elapsed}ms")
+            firstSetupReceived = true
         }
 
         if (ready && firstSetupReceived && firstGameStateReceived && loadingContainer.visibility == View.VISIBLE) {
@@ -740,7 +814,7 @@ class MainActivity : AppCompatActivity() {
             // No stored connection params: recreate match from mode
             when (lastMode) {
                 "ai_vs_ai" -> createMatchAndConnect(mode = "ai_vs_ai", forceMcoVsMca = lastForceMcoVsMca)
-                "vs_ai", "ar" -> createMatchAndConnect(mode = "vs_ai", forceMcoVsMca = false)
+                "vs_ai", "ar" -> createMatchAndConnect(mode = "vs_ai", forceMcoVsMca = false, selectedTeamA = lastTeamA, selectedTeamB = lastTeamB)
                 else -> showModeSelectionDialogFallback()
             }
         }
@@ -760,6 +834,16 @@ class MainActivity : AppCompatActivity() {
         godotAdapter.onResume()
         audioSystem.init()
         Thread { loadSounds() }.start()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        godotAdapter.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        godotAdapter.onStop()
     }
 
     override fun onPause() {
@@ -924,9 +1008,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onEndMatch(scoreA: Int, scoreB: Int) {
+        if (matchEnded) return
+        matchEnded = true
+        Log.i("DZ_END", "Match over ($scoreA-$scoreB) — stopping input, disconnecting, exiting")
         audioSystem.play("whistle2")
         audioSystem.stopLoop()
-        showEventOverlay("🏆 FULL TIME\n$scoreA - $scoreB", 5000)
+        // The GF container is gone — stop pumping inputs and drop LiveKit.
+        stopInputLoop()
+        if (::lkManager.isInitialized) {
+            lkManager.disconnect()
+        }
+        // Shut Godot down now (covered by the overlay) so the GL thread exits
+        // while the activity is alive — leaving it to die during finish()
+        // teardown segfaults inside libgodot (onRenderThreadExiting).
+        godotAdapter.destroy()
+        // Final score stays up briefly, then back to the menu instead of a
+        // frozen last frame with players still looping their anims.
+        showEventOverlay("🏆 FIN DU MATCH\n$scoreA - $scoreB", 4500)
+        loadingHandler.postDelayed({
+            if (!isFinishing && !isDestroyed) finish()
+        }, 5000)
     }
 
     private fun showEventOverlay(text: String, durationMs: Long) {
@@ -947,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
     private fun vibrate(ms: Long) {
         try {
             @Suppress("DEPRECATION")
-            val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
+            val vibrator = getSystemService(Activity.VIBRATOR_SERVICE) as? Vibrator
             if (vibrator != null && vibrator.hasVibrator()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
@@ -960,4 +1061,9 @@ class MainActivity : AppCompatActivity() {
             /* vibration failed */
         }
     }
+
+    override fun getCommandLine(): List<String> = godotAdapter.getCommandLine()
+    override fun getHostPlugins(godot: Godot): Set<GodotPlugin> = godotAdapter.getHostPlugins(godot)
+    override fun getGodot(): Godot = godotAdapter.getGodot()
+    override fun getActivity(): Activity = this
 }

@@ -25,6 +25,7 @@ class DZFootPlugin(godot: Godot) : GodotPlugin(godot) {
         const val SIGNAL_GAME_STATE = "game_state_received"
         const val SIGNAL_MATCH_SETUP = "match_setup_received"
         const val SIGNAL_MATCH_EVENT = "match_event_received"
+        const val SIGNAL_TACTICAL = "tactical_state_received"
     }
 
     private val inputBytesRef = AtomicReference<ByteArray?>(null)
@@ -35,7 +36,8 @@ class DZFootPlugin(godot: Godot) : GodotPlugin(godot) {
         return setOf(
             SignalInfo(SIGNAL_GAME_STATE, ByteArray::class.java),
             SignalInfo(SIGNAL_MATCH_SETUP, ByteArray::class.java),
-            SignalInfo(SIGNAL_MATCH_EVENT, ByteArray::class.java)
+            SignalInfo(SIGNAL_MATCH_EVENT, ByteArray::class.java),
+            SignalInfo(SIGNAL_TACTICAL, ByteArray::class.java)
         )
     }
 
@@ -57,6 +59,10 @@ class DZFootPlugin(godot: Godot) : GodotPlugin(godot) {
 
     fun emitMatchEvent(data: ByteArray) {
         emitSignal(SIGNAL_MATCH_EVENT, data)
+    }
+
+    fun emitTacticalState(data: ByteArray) {
+        emitSignal(SIGNAL_TACTICAL, data)
     }
 
     fun getInputBytes(): ByteArray? {

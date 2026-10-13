@@ -14,6 +14,8 @@ config/name="DZFoot"
 config/description="DZ Football — Godot-powered 3D renderer"
 run/main_scene="res://scenes/MainScene.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
+boot_splash/bg_color=Color(0.13, 0.17, 0.23, 1)
+boot_splash/show_image=false
 config/icon="res://icon.svg"
 
 [display]
@@ -73,7 +75,9 @@ action_switch={
 
 [rendering]
 
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
-anti_aliasing/quality/msaa_3d=2
+shader_compiler/shader_cache/enabled=false
+anti_aliasing/quality/msaa_3d=1
 environment/defaults/default_clear_color=Color(0.13, 0.17, 0.23, 1)
-anti_aliasing/quality/screen_space_aa=1
