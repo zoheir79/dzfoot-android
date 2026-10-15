@@ -97,7 +97,8 @@ func set_game_state_bytes(data: PackedByteArray) -> void:
 		return
 	_state_data = data.duplicate()
 	_has_new_state = true
-	_detect_layout()
+	if not _layout_logged:
+		_detect_layout()
 
 func _heading_matches(dx: float, dy: float, r: float) -> bool:
 	var l2 := dx * dx + dy * dy
@@ -193,6 +194,18 @@ func get_set_piece_type() -> int:
 		return -1
 	return _tac_data[TAC_SET_PIECE_TYPE]
 
+func get_set_piece_team() -> int:
+	if _tac_data.size() < 27:
+		return -1
+	var t: int = _tac_data[26]
+	return t if t <= 1 else -1
+
+func get_set_piece_taker() -> int:
+	if _tac_data.size() < TAC_SET_PIECE_TAKER + 1:
+		return -1
+	var tk: int = _tac_data[TAC_SET_PIECE_TAKER]
+	return tk if tk < DZ_MAX_PLAYERS else -1
+
 func get_offside_traps():
 	if _tac_data.size() < TAC_OFF_TRAP + 8:
 		return null
@@ -222,6 +235,16 @@ func get_tick() -> int:
 	if _state_data.size() < OFF_TICK + 4:
 		return 0
 	return _state_data.decode_u32(OFF_TICK)
+
+func get_timestamp_us() -> int:
+	if _state_data.size() < OFF_TIMESTAMP + 8:
+		return 0
+	return _state_data.decode_u64(OFF_TIMESTAMP)
+
+func get_game_mode() -> int:
+	if _state_data.size() < OFF_GAME_MODE + 1:
+		return 0
+	return _state_data[OFF_GAME_MODE]
 
 func get_game_flags() -> int:
 	if _state_data.size() < OFF_GAME_FLAGS + 1:
@@ -392,6 +415,33 @@ func get_official_anim(idx: int) -> int:
 	if idx < 0 or idx >= 3:
 		return 0
 	var off := OFF_OFFICIALS + idx * OFFICIAL_SIZE + 28
+	if _state_data.size() <= off:
+		return 0
+	return _state_data[off]
+
+func get_official_clip_id(idx: int) -> int:
+	# Packed u16 at offset 20 (os.dir[2] low 16 bits)
+	if idx < 0 or idx >= 3:
+		return 0
+	var off := OFF_OFFICIALS + idx * OFFICIAL_SIZE + 20
+	if _state_data.size() < off + 2:
+		return 0
+	return _state_data.decode_u16(off)
+
+func get_official_anim_progress(idx: int) -> int:
+	# Packed u16 at offset 22 (os.dir[2] high 16 bits)
+	if idx < 0 or idx >= 3:
+		return 0
+	var off := OFF_OFFICIALS + idx * OFFICIAL_SIZE + 22
+	if _state_data.size() < off + 2:
+		return 0
+	return _state_data.decode_u16(off)
+
+func get_official_flags(idx: int) -> int:
+	# flags byte @31 in NetworkOfficialState (bit0=active, bit1=yellow, bit2=red, bit3=mirror, bit4=special)
+	if idx < 0 or idx >= 3:
+		return 0
+	var off := OFF_OFFICIALS + idx * OFFICIAL_SIZE + 31
 	if _state_data.size() <= off:
 		return 0
 	return _state_data[off]

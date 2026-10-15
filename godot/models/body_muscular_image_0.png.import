@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://blj8nxdekowhs"
-path="res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.ctex"
+path.s3tc="res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.s3tc.ctex"
+path.etc2="res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e75fa5b337f21cb45c07322677165fcd"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://models/body_muscular_image_0.png"
-dest_files=["res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.ctex"]
+dest_files=["res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.s3tc.ctex", "res://.godot/imported/body_muscular_image_0.png-6b467d81c478f85529fc421819144a74.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

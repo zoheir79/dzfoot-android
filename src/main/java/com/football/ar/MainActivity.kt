@@ -82,15 +82,27 @@ class MainActivity : AppCompatActivity(), GodotHost {
     private var lastTeamB: String? = null
     private var retryDialogShown = false
 
-    // Dynamic crowd volume (FIFA-style reactive audio)
-    private var crowdVolumeCurrent = 0.3f
-    private var crowdVolumeTarget = 0.3f
+    // Dynamic crowd volume: very light background murmur (0.045f) during normal play,
+    // only rising noticeably on GOALS (0.18f, -50% vs previous levels) before returning to 0.045f.
+    private val crowdBaseline = 0.045f
+    private var crowdVolumeCurrent = 0.0f
+    private var crowdVolumeTarget = 0.045f
+    private var inPenaltyBox = false
+    private val prevPlayerFuncType = IntArray(22) { -1 }
+    private var lastBallTapSoundAt = 0L
+    private var lastStateLogAt = 0L
+    private var prevUiScoreA = -1
+    private var prevUiScoreB = -1
+    private var prevUiMinutes = -1
+    private var prevUiSeconds = -1
     private val crowdHandler = Handler(Looper.getMainLooper())
     private val crowdRunnable = object : Runnable {
         override fun run() {
-            // Smooth volume transition toward target
-            if (kotlin.math.abs(crowdVolumeCurrent - crowdVolumeTarget) > 0.01f) {
-                crowdVolumeCurrent += (crowdVolumeTarget - crowdVolumeTarget) * 0.1f
+            if (kotlin.math.abs(crowdVolumeCurrent - crowdVolumeTarget) > 0.003f) {
+                crowdVolumeCurrent += (crowdVolumeTarget - crowdVolumeCurrent) * 0.14f
+                if (crowdVolumeCurrent < 0.006f && crowdVolumeTarget == 0.0f) {
+                    crowdVolumeCurrent = 0.0f
+                }
                 audioSystem.setLoopVolume(crowdVolumeCurrent)
             }
             crowdHandler.postDelayed(this, 100)
@@ -240,6 +252,8 @@ class MainActivity : AppCompatActivity(), GodotHost {
         val forceMcoVsMca = intent.getBooleanExtra("force_mco_vs_mca", false)
         val teamA = intent.getStringExtra("team_a")
         val teamB = intent.getStringExtra("team_b")
+        val myTeam = intent.getIntExtra("my_team", 0)
+        godotAdapter.setMyTeam(myTeam)
 expectingServer = mode != null
         lastTeamA = teamA
         lastTeamB = teamB
@@ -578,6 +592,7 @@ expectingServer = mode != null
                 val token = json.getString("token")
 
                 runOnUiThread {
+                    godotAdapter.setMyTeam(1)
                     connectToLiveKit(lkUrl, token, roomId, "1v1")
                     /* joined PvP */
                     android.widget.Toast.makeText(this, "Match rejoint !", android.widget.Toast.LENGTH_SHORT).show()
@@ -594,32 +609,48 @@ expectingServer = mode != null
     private var sendInputLogCount = 0
     private val lastSendInputMsLock = Object()
     private var lastSendInputMs = 0L
+    private var lastIdleSendMs = 0L
+    private var lastSentButtons = 0
+    private var lastWasMoving = false
     private val soundsLock = Object()
     private var soundsLoaded = false
     private fun sendInput(force: Boolean = false, fromExecutor: Boolean = false) {
         val now = System.currentTimeMillis()
         synchronized(lastSendInputMsLock) {
-            if (!force && now - lastSendInputMs < 50) return
+            if (!force && now - lastSendInputMs < 20) return
             lastSendInputMs = now
         }
         if (::lkManager.isInitialized) {
             val inputBytes = godotAdapter.getPlayerInput()
             if (inputBytes != null && inputBytes.isNotEmpty()) {
-                // Parse PlayerInputPacket (36 bytes) to log real values
+                var isReliable = false
                 if (inputBytes.size >= 28) {
                     val buf = java.nio.ByteBuffer.wrap(inputBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                     val magic = buf.getInt(0)
                     val version = buf.getShort(4).toInt() and 0xFFFF
-                    val type = buf.getShort(6).toInt() and 0xFFFF
                     val dirX = buf.getFloat(12)
                     val dirZ = buf.getFloat(16)
                     val buttons = buf.getShort(20).toInt() and 0xFFFF
                     val playerIdx = buf.get(22).toInt() and 0xFF
                     val team = buf.get(23).toInt() and 0xFF
-                    val src = if (fromExecutor) "EXEC" else "UI"
-                    Log.i("DZ_INPUT", "ANDROID_OUT[$src] team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
+                    val isMoving = (kotlin.math.abs(dirX) > 0.01f || kotlin.math.abs(dirZ) > 0.01f)
+                    val buttonsChanged = (buttons != lastSentButtons)
+                    val movingChanged = (isMoving != lastWasMoving)
+                    isReliable = (buttons != 0) || buttonsChanged || movingChanged
+                    if (!isMoving && buttons == 0 && !buttonsChanged && !movingChanged && (now - lastIdleSendMs < 150L)) {
+                        return
+                    }
+                    if (!isMoving && buttons == 0) {
+                        lastIdleSendMs = now
+                    }
+                    lastSentButtons = buttons
+                    lastWasMoving = isMoving
+                    if (buttons != 0 || buttonsChanged || movingChanged || (isMoving && (++sendInputLogCount % 12 == 0))) {
+                        val src = if (fromExecutor) "EXEC" else "UI"
+                        Log.i("DZ_INPUT", "ANDROID_OUT[$src] team=$team player=$playerIdx dir=($dirX,$dirZ) buttons=0x%04X magic=0x%08X ver=$version".format(buttons, magic))
+                    }
                 }
-                lkManager.sendInput(inputBytes)
+                lkManager.sendInput(inputBytes, reliable = isReliable)
             }
         }
     }
@@ -660,27 +691,91 @@ expectingServer = mode != null
         val ballX = bb.getFloat(32)
         val ballY = bb.getFloat(36)
         val ballZ = bb.getFloat(40)
-        // NetworkPlayerState (48B): pos(12)+vel(8)+dir(12)+rotY(4)+anim+team+role+flags@39+tired(4)+functionType+enumVelocity+animProgress(2)
-        // flags offset within player record = 39 (bit 2 = active player)
-        val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 39].toInt() and 4 != 0 } ?: -1
-        // Camera offset: 12(header)+4(tick)+8(ts)+1(mode)+1(flags)+2(score)+4(timer)+40(ball)+1056(players)+96(officials)=1224
-        val camX = bb.getFloat(1224)
-        val camY = bb.getFloat(1228)
-        val camZ = bb.getFloat(1232)
-        val camRot0 = bb.getFloat(1236)
-        val camRot1 = bb.getFloat(1240)
-        val camRot2 = bb.getFloat(1244)
-        val camRot3 = bb.getFloat(1248)
-        val camFov = bb.getFloat(1252)
-        Log.i("DZ_STATE", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        // Prepare crowd MediaPlayer with very light background murmur (0.045f)
         if (!firstGameStateReceived) {
+            crowdVolumeTarget = crowdBaseline
+            runOnUiThread {
+                audioSystem.startCrowdLoopFromAssets(assets, "sounds/crowd02.ogg", crowdBaseline)
+            }
+        }
+        // 1. Detect ball tap / kick for ANY of the 22 players (both teams):
+        //    e_FunctionType: ShortPass=4 (soft), Header=7 (medium), LongPass=5 / HighPass=6 (firm), Shot=8 (strong)
+        val nowMs = System.currentTimeMillis()
+        for (pi in 0 until 22) {
+            val baseOff = 72 + pi * 48
+            val funcType = data[baseOff + 44].toInt() and 0xFF
+            val prevFt = prevPlayerFuncType[pi]
+            prevPlayerFuncType[pi] = funcType
+            if (inPlay && funcType != prevFt && nowMs - lastBallTapSoundAt > 160L) {
+                when (funcType) {
+                    4 -> {
+                        // Soft subtle ball tap for short pass (much quieter than long pass / lob / shot)
+                        lastBallTapSoundAt = nowMs
+                        audioSystem.playSound("ballsound", 0.11f, 1.16f)
+                    }
+                    7 -> {
+                        // Header ball contact
+                        lastBallTapSoundAt = nowMs
+                        audioSystem.playSound("ballsound", 0.20f, 1.05f)
+                    }
+                    5, 6 -> {
+                        // Firm ball kick for long pass or lob / high pass
+                        lastBallTapSoundAt = nowMs
+                        audioSystem.playSound("ballsound", 0.34f, 0.98f)
+                    }
+                    8 -> {
+                        // Powerful ball strike for shot
+                        lastBallTapSoundAt = nowMs
+                        audioSystem.playSound("ballsound", 0.42f, 0.92f)
+                    }
+                }
+            }
+        }
+        // 2. Keep crowd as a light background murmur during normal play (only goals trigger a real cheer)
+        val nowInBox = inPlay && kotlin.math.abs(ballX) > 0.68f && kotlin.math.abs(ballY) < 0.25f
+        if (nowInBox != inPenaltyBox) {
+            inPenaltyBox = nowInBox
+            if (nowInBox && crowdVolumeTarget <= crowdBaseline + 0.02f) {
+                crowdVolumeTarget = 0.065f
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (crowdVolumeTarget <= 0.08f) crowdVolumeTarget = crowdBaseline
+                }, 2200)
+            } else if (!nowInBox && crowdVolumeTarget <= 0.08f) {
+                crowdVolumeTarget = crowdBaseline
+            }
+        }
+        if (!firstGameStateReceived || nowMs - lastStateLogAt >= 5000L) {
+            lastStateLogAt = nowMs
+            // NetworkPlayerState (48B): pos(12)+vel(8)+dir(12)+rotY(4)+anim+team+role+flags@39+tired(4)+functionType+enumVelocity+animProgress(2)
+            val activeIdx = (0 until 22).firstOrNull { data[72 + it * 48 + 39].toInt() and 4 != 0 } ?: -1
+            val camX = bb.getFloat(1224)
+            val camY = bb.getFloat(1228)
+            val camZ = bb.getFloat(1232)
+            val camRot0 = bb.getFloat(1236)
+            val camRot1 = bb.getFloat(1240)
+            val camRot2 = bb.getFloat(1244)
+            val camRot3 = bb.getFloat(1248)
+            val camFov = bb.getFloat(1252)
+            Log.i("DZ_STATE", "ANDROID_IN size=${data.size} tick=$tick inPlay=$inPlay active=$activeIdx ball=($ballX,$ballY,$ballZ) score=$scoreA-$scoreB timer=${minutes}:${seconds} cam=($camX,$camY,$camZ) rot=($camRot0,$camRot1,$camRot2,$camRot3) fov=$camFov")
+        }
+        val wasFirst = !firstGameStateReceived
+        if (wasFirst) {
             loadingHandler.postDelayed(endWatchdog, 5000)
         }
         firstGameStateReceived = true
-        runOnUiThread {
-            scoreText.text = "$scoreA - $scoreB"
-            timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
-            updateLoadingOverlay()
+        val uiChanged = wasFirst || scoreA != prevUiScoreA || scoreB != prevUiScoreB || minutes != prevUiMinutes || seconds != prevUiSeconds
+        if (uiChanged) {
+            prevUiScoreA = scoreA
+            prevUiScoreB = scoreB
+            prevUiMinutes = minutes
+            prevUiSeconds = seconds
+            runOnUiThread {
+                scoreText.text = "$scoreA - $scoreB"
+                timerText.text = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
+                if (loadingContainer.visibility == View.VISIBLE) {
+                    updateLoadingOverlay()
+                }
+            }
         }
     }
 
@@ -861,6 +956,9 @@ expectingServer = mode != null
             lkManager.disconnect()
         }
         godotAdapter.destroy()
+        // MainActivity runs in dedicated ":godot" process; terminate it on exit
+        // so the next match starts with a clean libgodot_android.so state.
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     // Called from C++ via JNI (AudioManager bridge)
@@ -928,12 +1026,12 @@ expectingServer = mode != null
     }
 
     private fun onGoal(team: Int, @Suppress("UNUSED_PARAMETER") playerIdx: Int, scoreA: Int, scoreB: Int) {
-        audioSystem.play("whistle2")
-        crowdVolumeTarget = 1.0f // crowd erupts
+        audioSystem.playSound("whistle2", 0.28f, 1.0f)
+        crowdVolumeTarget = 0.18f
         Handler(Looper.getMainLooper()).postDelayed({
-            audioSystem.play("crowd01")
-        }, 500)
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.5f }, 4000)
+            audioSystem.playSound("crowd01", 0.17f, 1.0f)
+        }, 350)
+        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = crowdBaseline }, 3800)
         vibrate(500)
 
         val teamName = if (team == 0) "Team A" else "Team B"
@@ -945,18 +1043,22 @@ expectingServer = mode != null
     }
 
     private fun onYellowCard(team: Int, playerIdx: Int) {
-        audioSystem.play("whistle3")
-        crowdVolumeTarget = 0.6f
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 2000)
+        audioSystem.playSound("whistle3", 0.26f, 1.0f)
+        crowdVolumeTarget = 0.075f
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (crowdVolumeTarget <= 0.09f) crowdVolumeTarget = crowdBaseline
+        }, 1600)
         vibrate(200)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("🟨 YELLOW CARD — $teamName #$playerIdx", 2000)
     }
 
     private fun onRedCard(team: Int, playerIdx: Int) {
-        audioSystem.play("whistle3")
-        crowdVolumeTarget = 0.2f // shocked silence
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.4f }, 3000)
+        audioSystem.playSound("whistle3", 0.30f, 1.0f)
+        crowdVolumeTarget = 0.09f
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (crowdVolumeTarget <= 0.10f) crowdVolumeTarget = crowdBaseline
+        }, 2200)
         vibrate(400)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("🟥 RED CARD — $teamName #$playerIdx", 3000)
@@ -968,37 +1070,48 @@ expectingServer = mode != null
     }
 
     private fun onSetPiece(name: String, team: Int) {
-        audioSystem.play("whistle2")
-        crowdVolumeTarget = 0.5f // tension builds
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.3f }, 2000)
+        audioSystem.playSound("whistle2", 0.24f, 1.0f)
         val teamName = if (team == 0) "Team A" else "Team B"
         showEventOverlay("$name — $teamName", 1500)
     }
 
     private fun onFoul(@Suppress("UNUSED_PARAMETER") team: Int, @Suppress("UNUSED_PARAMETER") playerIdx: Int) {
-        audioSystem.play("whistle3")
-        crowdVolumeTarget = 0.7f // crowd reacts to foul
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 1500)
+        audioSystem.playSound("whistle3", 0.25f, 1.0f)
+        crowdVolumeTarget = 0.07f
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (crowdVolumeTarget <= 0.08f) crowdVolumeTarget = crowdBaseline
+        }, 1200)
         vibrate(100)
         showEventOverlay("⚠️ FOUL", 1000)
     }
 
     private fun onShot() {
-        audioSystem.play("ballsound")
-        crowdVolumeTarget = 0.8f // anticipation
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 2000)
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastBallTapSoundAt > 140L) {
+            lastBallTapSoundAt = nowMs
+            audioSystem.playSound("ballsound", 0.42f, 0.92f)
+        }
+        if (crowdVolumeTarget <= crowdBaseline + 0.02f) {
+            crowdVolumeTarget = 0.08f
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (crowdVolumeTarget <= 0.09f) crowdVolumeTarget = crowdBaseline
+            }, 1400)
+        }
     }
 
     private fun onPass() {
-        // Subtle pass sound can be played here if desired
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastBallTapSoundAt > 140L) {
+            lastBallTapSoundAt = nowMs
+            audioSystem.playSound("ballsound", 0.11f, 1.16f)
+        }
     }
 
     private fun onKickOff() {
-        audioSystem.play("whistle2")
+        audioSystem.playSound("whistle2", 0.25f, 1.0f)
         showEventOverlay("🔥 KICK OFF!", 2000)
-        audioSystem.playLoop("crowd02")
-        crowdVolumeTarget = 0.5f
-        Handler(Looper.getMainLooper()).postDelayed({ crowdVolumeTarget = 0.35f }, 3000)
+        audioSystem.startCrowdLoopFromAssets(assets, "sounds/crowd02.ogg", crowdBaseline)
+        crowdVolumeTarget = crowdBaseline
     }
 
     private fun onHalfTime() {
@@ -1030,18 +1143,10 @@ expectingServer = mode != null
         }, 5000)
     }
 
-    private fun showEventOverlay(text: String, durationMs: Long) {
+    private fun showEventOverlay(@Suppress("UNUSED_PARAMETER") text: String, @Suppress("UNUSED_PARAMETER") durationMs: Long) {
+        // Disabled yellow Android overlay: Godot renders clean white broadcast notifications directly.
         runOnUiThread {
-            eventText.text = text
-            eventText.visibility = View.VISIBLE
-            eventText.alpha = 0f
-            eventText.animate().alpha(1f).setDuration(200).start()
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                eventText.animate().alpha(0f).setDuration(500).withEndAction {
-                    eventText.visibility = View.GONE
-                }.start()
-            }, durationMs)
+            eventText.visibility = View.GONE
         }
     }
 

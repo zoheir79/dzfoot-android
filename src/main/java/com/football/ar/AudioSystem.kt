@@ -1,17 +1,21 @@
 package com.football.ar
 
+import android.content.res.AssetManager
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.SoundPool
 import android.util.Log
 
 class AudioSystem {
     private var soundPool: SoundPool? = null
     private val soundMap = mutableMapOf<String, Int>()
-    private var volume = 1.0f
-    private var currentLoopId = 0
+    private var sfxVolume = 0.35f
+    private var loopVolume = 0.045f
+    private var crowdPlayer: MediaPlayer? = null
     private var currentLoopName = ""
 
     fun init() {
+        if (soundPool != null) return
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_GAME)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -25,7 +29,6 @@ class AudioSystem {
 
     fun loadSound(name: String, data: ByteArray) {
         soundPool?.let { pool ->
-            // Write to temp file then load (SoundPool needs a file descriptor)
             val tempFile = java.io.File.createTempFile("snd_", "_.ogg")
             tempFile.deleteOnExit()
             tempFile.writeBytes(data)
@@ -36,8 +39,14 @@ class AudioSystem {
     }
 
     fun play(name: String) {
+        playSound(name, sfxVolume, 1.0f)
+    }
+
+    fun playSound(name: String, vol: Float, rate: Float = 1.0f) {
         val id = soundMap[name] ?: return
-        soundPool?.play(id, volume, volume, 1, 0, 1.0f)
+        val v = vol.coerceIn(0f, 1f)
+        val r = rate.coerceIn(0.5f, 1.5f)
+        soundPool?.play(id, v, v, 1, 0, r)
     }
 
     fun stopAll() {
@@ -45,29 +54,65 @@ class AudioSystem {
     }
 
     fun setVolume(vol: Float) {
-        volume = vol.coerceIn(0f, 1f)
+        sfxVolume = vol.coerceIn(0f, 1f)
     }
 
-    fun playLoop(name: String) {
-        if (currentLoopName == name) return
+    fun startCrowdLoopFromAssets(assets: AssetManager, assetPath: String = "sounds/crowd02.ogg", initialVol: Float = 0.0f) {
+        if (crowdPlayer != null && currentLoopName == assetPath) return
         stopLoop()
-        val id = soundMap[name] ?: return
-        currentLoopId = soundPool?.play(id, volume, volume, 1, -1, 1.0f) ?: 0
-        currentLoopName = name
-    }
-
-    fun stopLoop() {
-        if (currentLoopId != 0) {
-            soundPool?.stop(currentLoopId)
-            currentLoopId = 0
-            currentLoopName = ""
+        try {
+            val afd = assets.openFd(assetPath)
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+            afd.close()
+            mp.isLooping = true
+            mp.prepare()
+            loopVolume = initialVol.coerceIn(0f, 0.20f)
+            mp.setVolume(loopVolume, loopVolume)
+            if (loopVolume > 0.005f) {
+                mp.start()
+            }
+            crowdPlayer = mp
+            currentLoopName = assetPath
+        } catch (e: Exception) {
+            Log.w("AudioSystem", "Failed to start crowd MediaPlayer: ${e.message}")
         }
     }
 
+    fun playLoop(name: String) {
+        if (currentLoopName == name && crowdPlayer != null) return
+    }
+
+    fun stopLoop() {
+        try {
+            crowdPlayer?.let {
+                if (it.isPlaying) it.stop()
+                it.release()
+            }
+        } catch (_: Exception) {
+        }
+        crowdPlayer = null
+        currentLoopName = ""
+    }
+
     fun setLoopVolume(vol: Float) {
-        volume = vol.coerceIn(0f, 1f)
-        if (currentLoopId != 0 && currentLoopName.isNotEmpty()) {
-            soundPool?.setVolume(currentLoopId, volume, volume)
+        loopVolume = vol.coerceIn(0f, 0.20f)
+        try {
+            crowdPlayer?.let { mp ->
+                if (loopVolume > 0.006f) {
+                    mp.setVolume(loopVolume, loopVolume)
+                    if (!mp.isPlaying) mp.start()
+                } else {
+                    if (mp.isPlaying) mp.pause()
+                }
+            }
+        } catch (_: Exception) {
         }
     }
 

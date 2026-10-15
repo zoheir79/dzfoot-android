@@ -105,6 +105,16 @@ func _generate_animation(clip_id: int, bone_paths: Dictionary) -> Animation:
 
 	var animation := Animation.new()
 	var last_time := 0.0
+	if tracks.has("player") and bone_paths.has("player"):
+		var p_track_idx := animation.add_track(Animation.TYPE_POSITION_3D)
+		animation.track_set_path(p_track_idx, bone_paths["player"])
+		for kf: Dictionary in tracks["player"]:
+			var pv: Vector3 = kf.get("p", Vector3.ZERO)
+			var t_p: float = kf.f / GF_FPS
+			# Apply vertical height offset (GF Z -> Godot Y); horizontal X/Z comes from server position
+			animation.track_insert_key(p_track_idx, t_p, Vector3(0.0, pv.z, 0.0))
+			if t_p > last_time:
+				last_time = t_p
 	for bone in BONES:
 		if not tracks.has(bone):
 			continue
@@ -123,6 +133,13 @@ func _generate_animation(clip_id: int, bone_paths: Dictionary) -> Animation:
 
 func has_clip(clip_id: int) -> bool:
 	return clip_id >= 0 and clip_id < get_clip_count()
+
+
+func find_disk_clip_id(substr: String) -> int:
+	for i in range(_disk_files.size()):
+		if str(_disk_files[i]).find(substr) != -1:
+			return _specs.size() * 2 + i * 2
+	return -1
 
 
 # ------------------------------------------------------------------
@@ -390,7 +407,33 @@ func _generate_autogen(spec: Dictionary) -> Dictionary:
 	var t1: Dictionary = spec.t1
 	var t2: Dictionary = spec.t2
 	var angle: float = spec.angle
+	var is_pure_idle: bool = (t1.in_vel == 0.0 and t2.out_vel == 0.0 and absf(angle) < 0.05)
 	var out := {}
+
+	# Port n == 0 ("player" vertical height interpolation from animcollection.cpp:326)
+	var ptrack1: Array = t1.tracks.get("player", [])
+	var ptrack2: Array = t2.tracks.get("player", [])
+	var pframes := {0: true, 1: true, 12: true, 23: true, 24: true}
+	for kf: Dictionary in ptrack1:
+		pframes[kf.f] = true
+	for kf: Dictionary in ptrack2:
+		pframes[kf.f] = true
+	for pf in range(2, GEN_FRAME_COUNT - 2, 4):
+		pframes[pf] = true
+	var pframe_list: Array = pframes.keys()
+	pframe_list.sort()
+	var pkfs: Array = []
+	for frame: int in pframe_list:
+		var z1: float = _interp_player_z(ptrack1, frame, int(t1.frame_count))
+		var z2: float = _interp_player_z(ptrack2, frame, int(t2.frame_count))
+		var orig_bias := clampf(frame - 1.0, 0.0, GEN_FRAME_COUNT - 3.0) / (GEN_FRAME_COUNT - 3.0)
+		var bias := _curve(orig_bias, 0.7)
+		var h: float = lerpf(z1, z2, bias)
+		if is_pure_idle:
+			var breath := sin(float(frame) / float(GEN_FRAME_COUNT - 1) * PI)
+			h += 0.016 * breath
+		pkfs.append({"f": frame, "q": Quaternion.IDENTITY, "p": Vector3(0.0, 0.0, h)})
+	out["player"] = pkfs
 
 	for bone in BONES:
 		var track1: Array = t1.tracks.get(bone, [])
@@ -402,6 +445,10 @@ func _generate_autogen(spec: Dictionary) -> Dictionary:
 			frames[kf.f] = true
 		for kf: Dictionary in track2:
 			frames[kf.f] = true
+		if is_pure_idle:
+			frames[6] = true
+			frames[12] = true
+			frames[18] = true
 		var frame_list: Array = frames.keys()
 		frame_list.sort()
 
@@ -435,6 +482,21 @@ func _generate_autogen(spec: Dictionary) -> Dictionary:
 					_rotated2d3(Vector3(0.0, 1.0, 0.0), _angle2d(Vector2(axis.x, axis.y))))
 				orientation = lean_quat * orientation
 
+			if is_pure_idle:
+				var w := sin(float(frame) / float(GEN_FRAME_COUNT - 1) * PI)
+				if bone == "body":
+					orientation = _quat_angle_axis(0.022 * w, Vector3(0.0, 1.0, 0.0)) * orientation
+				elif bone == "middle":
+					orientation = _quat_angle_axis(0.032 * w, Vector3(1.0, 0.0, 0.3).normalized()) * orientation
+				elif bone == "neck":
+					orientation = _quat_angle_axis(-0.024 * w, Vector3(1.0, 0.0, -0.4).normalized()) * orientation
+				elif bone == "left_shoulder":
+					orientation = _quat_angle_axis(0.038 * w, Vector3(1.0, 0.2, 0.0).normalized()) * orientation
+				elif bone == "right_shoulder":
+					orientation = _quat_angle_axis(-0.038 * w, Vector3(1.0, -0.2, 0.0).normalized()) * orientation
+				elif bone == "left_knee" or bone == "right_knee":
+					orientation = _quat_angle_axis(-0.035 * w, Vector3(1.0, 0.0, 0.0)) * orientation
+
 			kfs.append({"f": frame, "q": orientation})
 
 		out[bone] = kfs
@@ -448,6 +510,13 @@ func _generate_autogen(spec: Dictionary) -> Dictionary:
 func _mirror_tracks(tracks: Dictionary) -> Dictionary:
 	var out := {}
 	for bone in tracks:
+		if bone == "player":
+			var pkfs: Array = []
+			for kf: Dictionary in tracks["player"]:
+				var pv: Vector3 = kf.get("p", Vector3.ZERO)
+				pkfs.append({"f": kf.f, "q": Quaternion.IDENTITY, "p": Vector3(-pv.x, pv.y, pv.z)})
+			out["player"] = pkfs
+			continue
 		var src_bone: String = bone
 		if bone.begins_with("left_"):
 			src_bone = "right_" + bone.substr(5)
@@ -460,6 +529,31 @@ func _mirror_tracks(tracks: Dictionary) -> Dictionary:
 			kfs.append({"f": kf.f, "q": Quaternion(q.x, -q.y, -q.z, q.w)})
 		out[bone] = kfs
 	return out
+
+
+func _interp_player_z(track: Array, frame: int, template_frame_count: int) -> float:
+	if track.is_empty():
+		return 0.0
+	if frame > 0 and frame < template_frame_count:
+		var prev: Dictionary = {}
+		var cur: Dictionary = {}
+		for kf: Dictionary in track:
+			if kf.f < frame:
+				prev = kf
+			elif kf.f >= frame:
+				cur = kf
+				break
+		if not prev.is_empty() and not cur.is_empty():
+			var dist: int = cur.f - prev.f
+			var bias: float = float(frame - prev.f) / float(dist)
+			return lerpf(prev.p.z, cur.p.z, bias)
+		elif not cur.is_empty():
+			return cur.p.z
+		elif not prev.is_empty():
+			return prev.p.z
+	elif frame >= template_frame_count:
+		return track[track.size() - 1].p.z
+	return track[0].p.z
 
 
 # ------------------------------------------------------------------

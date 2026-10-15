@@ -40,6 +40,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
+            android:process=":godot"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
 

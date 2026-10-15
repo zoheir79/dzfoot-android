@@ -48,7 +48,9 @@ class LiveKitManager(private val activity: MainActivity) {
                         scheduleRetry("Disconnected")
                     }
                     is RoomEvent.DataReceived -> {
-                        android.util.Log.i("DZ_LK", "LK_RECV topic=${event.topic} size=${event.data.size}")
+                        if (event.topic != "gs" && event.topic != "tac") {
+                            android.util.Log.i("DZ_LK", "LK_RECV topic=${event.topic} size=${event.data.size}")
+                        }
                         when (event.topic) {
                             "gs" -> activity.onGameStateReceived(event.data)
                             "setup" -> activity.onMatchSetupReceived(event.data)
@@ -112,14 +114,12 @@ class LiveKitManager(private val activity: MainActivity) {
         }, delayMs)
     }
 
-    fun sendInput(inputBytes: ByteArray) {
+    fun sendInput(inputBytes: ByteArray, reliable: Boolean = false) {
         val r = room
         if (r == null) {
-            android.util.Log.w("DZ_NET", "LK_SEND room=null")
             return
         }
         if (r.state != Room.State.CONNECTED) {
-            android.util.Log.w("DZ_NET", "LK_SEND not connected, state=${r.state}")
             return
         }
         scope.launch {
@@ -127,10 +127,9 @@ class LiveKitManager(private val activity: MainActivity) {
                 @Suppress("CheckResult")
                 r.localParticipant.publishData(
                     data = inputBytes,
-                    reliability = DataPublishReliability.RELIABLE,
+                    reliability = if (reliable) DataPublishReliability.RELIABLE else DataPublishReliability.LOSSY,
                     topic = "in",
                 )
-                android.util.Log.i("DZ_NET", "LK_SEND topic=in size=${inputBytes.size}")
             } catch (e: Exception) {
                 android.util.Log.w("DZ_NET", "LK_SEND publishData failed: ${e.message}")
             }

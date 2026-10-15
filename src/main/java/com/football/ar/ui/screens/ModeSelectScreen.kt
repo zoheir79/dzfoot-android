@@ -67,13 +67,26 @@ fun ModeSelectScreen(navController: NavHostController) {
             Spacer(modifier = Modifier.height(20.dp))
 
             ModeCard(
-                title = "1 vs 1 JOUEUR",
-                subtitle = "Creer ou rejoindre un match PvP",
+                title = "CREER MATCH 1 vs 1",
+                subtitle = "Heberger un match PvP (Code Match)",
                 icon = Icons.Filled.Group,
-                description = "Affronte un autre joueur en ligne",
+                description = "Choisis ton equipe et partage le code a ton adversaire",
                 color = AccentGold,
                 onClick = {
-                    navController.navigate(Screen.TeamSelect.createRoute("1v1"))
+                    navController.navigate(Screen.TeamSelect.createRoute("1v1_host"))
+                }
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            ModeCard(
+                title = "REJOINDRE MATCH 1 vs 1",
+                subtitle = "Entrer un Code Match ou voir les salons",
+                icon = Icons.Filled.Search,
+                description = "Rejoins un match en attente et choisis ton equipe",
+                color = AccentGreen,
+                onClick = {
+                    navController.navigate(Screen.WaitingJoin.route)
                 }
             )
 

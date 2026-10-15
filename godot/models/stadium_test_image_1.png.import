@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dlya1rpepm5dc"
-path="res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.ctex"
+path.s3tc="res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.s3tc.ctex"
+path.etc2="res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "841e6f1a434881e5b2547626c1a6cf89"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://models/stadium_test_image_1.png"
-dest_files=["res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.ctex"]
+dest_files=["res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.s3tc.ctex", "res://.godot/imported/stadium_test_image_1.png-da9d23872c553ef377d4c7e16179d6cd.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

@@ -30,7 +30,8 @@ func _initialize() -> void:
 		for anim_name in lib.get_animation_list():
 			var anim: Animation = lib.get_animation(anim_name)
 			for i in anim.get_track_count():
-				if anim.track_get_type(i) == Animation.TYPE_ROTATION_3D:
+				var ttype := anim.track_get_type(i)
+				if ttype == Animation.TYPE_ROTATION_3D or ttype == Animation.TYPE_POSITION_3D:
 					var p: NodePath = anim.track_get_path(i)
 					if p.get_name_count() > 0:
 						bone_paths[p.get_name(p.get_name_count() - 1)] = p

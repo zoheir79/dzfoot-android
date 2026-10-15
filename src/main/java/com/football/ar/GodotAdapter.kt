@@ -22,6 +22,12 @@ class GodotAdapter(private val activity: Activity) {
     private var containerLayout: FrameLayout? = null
     private var dzPlugin: DZFootPlugin? = null
     private var dzPluginGodot: Godot? = null
+    private var pendingMyTeam: Int = 0
+
+    fun setMyTeam(team: Int) {
+        pendingMyTeam = team
+        dzPlugin?.myTeam = team
+    }
 
     fun initialize(): View? {
         try {
@@ -69,7 +75,7 @@ class GodotAdapter(private val activity: Activity) {
         // match the previous plugin still references the dead instance and
         // emitSignal() throws "not registered" — recreate it per instance.
         if (dzPlugin == null || dzPluginGodot !== godot) {
-            dzPlugin = DZFootPlugin(godot)
+            dzPlugin = DZFootPlugin(godot).also { it.myTeam = pendingMyTeam }
             dzPluginGodot = godot
         }
         return setOf(dzPlugin!!)

@@ -20,14 +20,24 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun TeamSelectScreen(navController: NavHostController, mode: String) {
+    val isPvPHost = (mode == "1v1" || mode == "1v1_host")
+    val isPvPJoin = mode.startsWith("1v1_join:")
+    val joinParts = if (isPvPJoin) mode.split(":") else emptyList()
+    val joinTarget = if (joinParts.size >= 2) joinParts[1] else ""
+    val hostTeamIdFromJoin = if (joinParts.size >= 3) joinParts[2] else ""
+
     var teams by remember { mutableStateOf<List<TeamInfo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var selectedTeamA by remember { mutableStateOf<TeamInfo?>(null) }
     var selectedTeamB by remember { mutableStateOf<TeamInfo?>(null) }
-    var step by remember { mutableStateOf(1) }
+    var step by remember { mutableStateOf(if (isPvPJoin) 2 else 1) }
 
     LaunchedEffect(Unit) {
         teams = fetchTeamsFromCatalog()
+        if (isPvPJoin && hostTeamIdFromJoin.isNotBlank()) {
+            selectedTeamA = teams.find { it.id.equals(hostTeamIdFromJoin, ignoreCase = true) || it.shortName.equals(hostTeamIdFromJoin, ignoreCase = true) }
+                ?: TeamInfo(hostTeamIdFromJoin, hostTeamIdFromJoin.uppercase(), hostTeamIdFromJoin.take(3).uppercase())
+        }
         isLoading = false
     }
 
@@ -40,10 +50,16 @@ fun TeamSelectScreen(navController: NavHostController, mode: String) {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val headerTitle = when {
+                isPvPHost -> "CHOISIR TON EQUIPE (DOMICILE)"
+                isPvPJoin -> "CHOISIR TON EQUIPE (EXTERIEUR)"
+                step == 1 -> "CHOISIR TON EQUIPE"
+                else -> "CHOISIR L'ADVERSAIRE"
+            }
             ScreenHeader(
-                title = if (step == 1) "CHOISIR TON EQUIPE" else "CHOISIR L'ADVERSAIRE",
+                title = headerTitle,
                 onBack = {
-                    if (step == 2) {
+                    if (!isPvPHost && !isPvPJoin && step == 2) {
                         step = 1
                         selectedTeamB = null
                     } else {
@@ -74,16 +90,28 @@ fun TeamSelectScreen(navController: NavHostController, mode: String) {
                             isSelected = (step == 1 && selectedTeamA?.id == team.id) ||
                                     (step == 2 && selectedTeamB?.id == team.id),
                             onClick = {
-                                if (step == 1) {
-                                    selectedTeamA = team
-                                    step = 2
-                                } else {
-                                    selectedTeamB = team
-                                    if (mode == "1v1") {
+                                when {
+                                    isPvPHost -> {
+                                        // Creator ONLY picks their own team! Opponent will pick theirs when joining.
+                                        selectedTeamA = team
                                         navController.navigate(
-                                            Screen.WaitingPvP.createRoute(selectedTeamA!!.id, team.id)
+                                            Screen.WaitingPvP.createRoute(team.id, "waiting")
                                         )
-                                    } else {
+                                    }
+                                    isPvPJoin -> {
+                                        // Joiner ONLY picks their own team (Team B) and joins the match!
+                                        selectedTeamB = team
+                                        val hostId = selectedTeamA?.id?.ifBlank { "mca" } ?: "mca"
+                                        navController.navigate(
+                                            Screen.WaitingPvP.createRoute(hostId, "join_${joinTarget}_${team.id}")
+                                        )
+                                    }
+                                    step == 1 -> {
+                                        selectedTeamA = team
+                                        step = 2
+                                    }
+                                    else -> {
+                                        selectedTeamB = team
                                         navController.navigate(
                                             Screen.TeamComposition.createRoute(
                                                 mode,

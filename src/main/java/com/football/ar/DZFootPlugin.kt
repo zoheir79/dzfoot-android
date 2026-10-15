@@ -29,6 +29,7 @@ class DZFootPlugin(godot: Godot) : GodotPlugin(godot) {
     }
 
     private val inputBytesRef = AtomicReference<ByteArray?>(null)
+    @Volatile var myTeam: Int = 0
 
     override fun getPluginName(): String = "DZFootPlugin"
 
@@ -43,8 +44,14 @@ class DZFootPlugin(godot: Godot) : GodotPlugin(godot) {
 
     @UsedByGodot
     fun set_input_packet(data: ByteArray) {
+        if (data.size >= 24) {
+            data[23] = (myTeam and 0xFF).toByte()
+        }
         inputBytesRef.set(data)
     }
+
+    @UsedByGodot
+    fun get_my_team(): Int = myTeam
 
     @UsedByGodot
     fun is_godot_ready(): Boolean = true

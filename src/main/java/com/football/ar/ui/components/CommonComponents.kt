@@ -391,8 +391,10 @@ data class TeamInfo(
 
 data class MatchListing(
     val roomId: String,
+    val matchCode: String = "",
     val playerA: String,
     val teamA: String?,
+    val teamAName: String? = null,
     val teamB: String?,
     val duration: Int?
 )
