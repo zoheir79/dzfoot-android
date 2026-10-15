@@ -2294,10 +2294,12 @@ func _verify_motion(delta: float) -> void:
 		if sample == "":
 			sample = "p%d spd=%.1f clip=%d ft=%d cSrv=%.2f cVis=%.2f" % [i, spd, dz_bridge.get_player_clip_id(i), dz_bridge.get_player_function_type(i), c_srv, c_vis]
 	var fps := Engine.get_frames_per_second()
+	var cpu_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var dc := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 	if n > 0:
-		print("[DZ_VERIFY] fps=%.0f moving=%d avgCosSrvDirVsMotion=%.2f (neg=%d) avgCosVisualFacingVsMotion=%.2f (neg=%d) clipHit=%d miss=%d | %s" % [fps, n, sum_srv / n, neg_srv, sum_vis / n, neg_vis, _clip_hits, _clip_misses, sample])
+		print("[DZ_VERIFY] fps=%.0f cpu=%.1fms dc=%d moving=%d avgCosSrvDirVsMotion=%.2f (neg=%d) avgCosVisualFacingVsMotion=%.2f (neg=%d) clipHit=%d miss=%d | %s" % [fps, cpu_ms, dc, n, sum_srv / n, neg_srv, sum_vis / n, neg_vis, _clip_hits, _clip_misses, sample])
 	else:
-		print("[DZ_VERIFY] fps=%.0f no player >3m/s this window; clipHit=%d miss=%d" % [fps, _clip_hits, _clip_misses])
+		print("[DZ_VERIFY] fps=%.0f cpu=%.1fms dc=%d no player >3m/s this window; clipHit=%d miss=%d" % [fps, cpu_ms, dc, _clip_hits, _clip_misses])
 
 func _update_camera_smooth(delta: float) -> void:
 	if not _cam_have_target or camera == null:
@@ -4391,34 +4393,46 @@ func _setup_ad_boards() -> void:
 		_make_board_mat(Color(0.05, 0.50, 0.24), 1.0),
 		_make_board_mat(Color(0.76, 0.12, 0.18), 2.0),
 	]
+	var sts := [SurfaceTool.new(), SurfaceTool.new(), SurfaceTool.new()]
+	for k in range(3):
+		(sts[k] as SurfaceTool).begin(Mesh.PRIMITIVE_TRIANGLES)
+	var bm_x := BoxMesh.new()
+	bm_x.size = Vector3(7.5, 0.9, 0.1)
+	var bm_z := BoxMesh.new()
+	bm_z.size = Vector3(0.1, 0.9, 7.5)
 	var d := 3.5
 	var mi := 0
 	for zs in [-1.0, 1.0]:
 		var x := -55.0
 		while x < 55.0:
-			var seg := MeshInstance3D.new()
-			var bm := BoxMesh.new()
-			bm.size = Vector3(7.5, 0.9, 0.1)
-			seg.mesh = bm
-			seg.material_override = mats[mi % 3]
-			seg.position = Vector3(x + 3.75, _pitch_top_y + 0.45, zs * (36.0 + d))
-			stadium.add_child(seg)
-			_add_board_label(seg, mi, 0.0 if zs < 0.0 else PI, Vector3(0, 0, 0.08 if zs < 0.0 else -0.08))
+			var pos := Vector3(x + 3.75, _pitch_top_y + 0.45, zs * (36.0 + d))
+			(sts[mi % 3] as SurfaceTool).append_from(bm_x, 0, Transform3D(Basis.IDENTITY, pos))
+			if zs < 0.0 and (_high_quality or mi % 2 == 0):
+				var holder := Node3D.new()
+				holder.position = pos
+				stadium.add_child(holder)
+				_add_board_label(holder, mi, 0.0, Vector3(0, 0, 0.08))
 			x += 7.5
 			mi += 1
 	for xs in [-1.0, 1.0]:
 		var z := -36.0
 		while z < 36.0:
-			var seg := MeshInstance3D.new()
-			var bm := BoxMesh.new()
-			bm.size = Vector3(0.1, 0.9, 7.5)
-			seg.mesh = bm
-			seg.material_override = mats[mi % 3]
-			seg.position = Vector3(xs * (55.0 + d), _pitch_top_y + 0.45, z + 3.75)
-			stadium.add_child(seg)
-			_add_board_label(seg, mi, PI / 2.0 if xs < 0.0 else -PI / 2.0, Vector3(0.08 if xs < 0.0 else -0.08, 0, 0))
+			var pos := Vector3(xs * (55.0 + d), _pitch_top_y + 0.45, z + 3.75)
+			(sts[mi % 3] as SurfaceTool).append_from(bm_z, 0, Transform3D(Basis.IDENTITY, pos))
+			if _high_quality or mi % 2 == 0:
+				var holder := Node3D.new()
+				holder.position = pos
+				stadium.add_child(holder)
+				_add_board_label(holder, mi, PI / 2.0 if xs < 0.0 else -PI / 2.0, Vector3(0.08 if xs < 0.0 else -0.08, 0, 0))
 			z += 7.5
 			mi += 1
+	for k in range(3):
+		var merged_seg := MeshInstance3D.new()
+		merged_seg.name = "AdBoardsBatch_%d" % k
+		merged_seg.mesh = (sts[k] as SurfaceTool).commit()
+		merged_seg.material_override = mats[k]
+		merged_seg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		stadium.add_child(merged_seg)
 
 func _add_board_label(seg: Node3D, idx: int, yaw: float, offset: Vector3) -> void:
 	var lb := Label3D.new()
